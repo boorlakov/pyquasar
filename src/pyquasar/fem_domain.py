@@ -3,7 +3,7 @@ from typing import Optional, Callable
 import numpy as np
 from scipy import sparse
 
-from .fem import FemLine2, FemTriangle3
+from .fem import FemLine2, FemTriangle3, FemTetrahedron4
 from .mesh import MeshDomain, MeshBlock
 import numpy.typing as npt
 
@@ -152,7 +152,7 @@ class FemDomain:
 
     Returns
     -------
-    FemLine2 or FemTriangle3
+    FemLine2 or FemTriangle3 or FemTetrahedron4
       The corresponding FEM element.
 
     Raises
@@ -166,6 +166,8 @@ class FemDomain:
         return FemLine2(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case "Triangle 3":
         return FemTriangle3(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Tetrahedron 4":
+        return FemTetrahedron4(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case _:
         raise ValueError(f"Unsupported element type {block.type}")
 
@@ -236,7 +238,7 @@ class FemDomain:
 
     if hasattr(self, "_neumann_factor"):
       return self.neumann_factor(flow)
-    return sparse.linalg.minres(sparse.linalg.LinearOperator(self.stiffness_matrix.shape, matvec=mult), flow, tol=1e-12)[0]
+    return sparse.linalg.minres(sparse.linalg.LinearOperator(self.stiffness_matrix.shape, matvec=mult), flow, rtol=1e-12)[0]
 
   def solve_dirichlet(self, disp: npt.NDArray[np.floating], lumped: bool = False) -> npt.NDArray[np.floating]:
     """Solve the FEM Dirichlet problem.
@@ -258,7 +260,7 @@ class FemDomain:
         sol = self.dirichlet_factor(flow[self.ext_dof_count :])
       else:
         sol = sparse.linalg.minres(
-          self.stiffness_matrix[self.ext_dof_count :, self.ext_dof_count :], flow[self.ext_dof_count :], tol=1e-12
+          self.stiffness_matrix[self.ext_dof_count :, self.ext_dof_count :], flow[self.ext_dof_count :], rtol=1e-12
         )[0]
       flow -= self.stiffness_matrix[:, self.ext_dof_count :] @ sol
     return flow

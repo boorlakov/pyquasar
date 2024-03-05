@@ -189,6 +189,68 @@ class FemBase2D(FemBase):
     return np.sum(self.J) ** 0.5, np.mean(self.J) ** 0.5
 
 
+class FemBase3D(FemBase):
+  def __init__(
+    self,
+    elements_verts: npt.NDArray[np.floating],
+    elements: npt.NDArray[np.signedinteger],
+    quad_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating],
+  ):
+    super().__init__(elements, quad_points, weights)
+    self._center = elements_verts[:, 0]
+    self._dir1 = elements_verts[:, 1] - self.center
+    self._dir2 = elements_verts[:, 2] - self.center
+    self._dir3 = elements_verts[:, 3] - self.center
+    normal = np.cross(self.dir1, self.dir2).reshape(self.center.shape[0], -1)
+    self._J = np.sum(normal * self.dir3, axis=-1)[:, None]
+    self._contradir = [
+      np.cross(self.dir2, self.dir3),
+      np.cross(self.dir3, self.dir1),
+      np.cross(self.dir1, self.dir2),
+    ] / self.J
+    self._contrametric = np.sum(self.contradir[:, None, :] * self.contradir[None, :, :], axis=-1)
+
+  @property
+  def center(self) -> npt.NDArray[np.floating]:
+    """The center of the element vertices."""
+    return self._center
+
+  @property
+  def dir1(self) -> npt.NDArray[np.floating]:
+    """The first direction of the element vertices."""
+    return self._dir1
+
+  @property
+  def dir2(self) -> npt.NDArray[np.floating]:
+    """The second direction of the element vertices."""
+    return self._dir2
+
+  @property
+  def dir3(self) -> npt.NDArray[np.floating]:
+    """The third direction of the element vertices."""
+    return self._dir3
+
+  @property
+  def J(self) -> npt.NDArray[np.floating]:
+    """The Jacobian of the elements."""
+    return self._J
+
+  @property
+  def contradir(self) -> npt.NDArray[np.floating]:
+    """The contravariant direction of the elements."""
+    return self._contradir
+
+  @property
+  def contrametric(self) -> npt.NDArray[np.floating]:
+    """The contravariant metric of the elements."""
+    return self._contrametric
+
+  def diameter(self) -> tuple[np.floating, np.floating]:
+    """Returns domain diameter and its element."""
+    return np.sum(self.J) ** 0.5, np.mean(self.J) ** 0.5
+
+
 class FemLine2(FemBase1D):
   """Represents a finite element line in a 2D space."""
 
@@ -318,8 +380,19 @@ class FemTriangle3(FemBase2D):
     weights: npt.NDArray[np.floating],
   ):
     super().__init__(elements_verts, elements, quad_points, weights)
-    self._psi = np.array([1 - self.quad_points[:, 0] - self.quad_points[:, 1], self.quad_points[:, 0], self.quad_points[:, 1]])
-    self._psi_grad = np.array([[-1, 1, 0], [-1, 0, 1]])
+    self._psi = np.array(
+      [
+        1 - self.quad_points[:, 0] - self.quad_points[:, 1],
+        self.quad_points[:, 0],
+        self.quad_points[:, 1],
+      ]
+    )
+    self._psi_grad = np.array(
+      [
+        [-1, 1, 0],
+        [-1, 0, 1],
+      ]
+    )
 
   @property
   def psi(self) -> npt.NDArray[np.floating]:
@@ -387,4 +460,100 @@ class FemTriangle3(FemBase2D):
       f = func(point, self.normal[:, None])
     else:
       f = np.asarray(func, dtype=np.float_)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+
+class FemTetrahedron4(FemBase3D):
+  def __init__(
+    self,
+    elements_verts: npt.NDArray[np.floating],
+    elements: npt.NDArray[np.signedinteger],
+    quad_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating],
+  ):
+    super().__init__(elements_verts, elements, quad_points, weights)
+    self._psi = np.array(
+      [
+        1 - self.quad_points[:, 0] - self.quad_points[:, 1] - self.quad_points[:, 2],
+        self.quad_points[:, 0],
+        self.quad_points[:, 1],
+        self.quad_points[:, 2],
+      ]
+    )
+    self._psi_grad = np.array(
+      [
+        [-1, 1, 0, 0],
+        [-1, 0, 1, 0],
+        [-1, 0, 0, 1],
+      ],
+      dtype=self.psi.dtype,
+    )
+
+  @property
+  def psi(self) -> npt.NDArray[np.floating]:
+    """The basis functions of the finite element tetrahedron."""
+    return self._psi
+
+  @property
+  def psi_grad(self) -> npt.NDArray[np.floating]:
+    """The gradient of the basis functions of the finite element tetrahedron."""
+    return self._psi_grad
+
+  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the mass matrix for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the mass matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+
+  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the stiffness matrix for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the stiffness matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    S = (1 / 6) * self.psi_grad[:, None, :, None] * self.psi_grad[None, :, None, :]
+    return self.matrix(self.J[..., None] * np.sum(self.contrametric[:, :, None, None] * S[..., None], axis=(0, 1)).T, shape)
+
+  def load_vector(
+    self,
+    func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
+    shape: tuple[int, ...],
+  ) -> npt.NDArray[np.floating]:
+    """Compute the load vector for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    func : Callable or ArrayLike
+      The function or array-like object representing the load.
+    shape : tuple[int, ...]
+      The shape of the load vector.
+
+    Returns
+    -------
+    NDArray[float]
+    """
+    if callable(func):
+      point = (
+        self.center[:, None]
+        + self.quad_points[None, :, 0, None] * self.dir1[:, None]
+        + self.quad_points[None, :, 1, None] * self.dir2[:, None]
+        + self.quad_points[None, :, 2, None] * self.dir3[:, None]
+      )
+      f = func(point, 0)
+    else:
+      f = np.asarray(func, dtype=np.float64)
     return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
