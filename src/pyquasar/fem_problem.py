@@ -95,7 +95,6 @@ class FemProblem:
     for domain in self.domains:
       proj_matrix += domain.project_into(points)
     proj_matrix = proj_matrix.tocsr()
-    print(proj_matrix.toarray())
     return proj_matrix @ solution
 
   def solve(self, rtol: float = 1e-15, atol: float = 0, verbose: bool = False) -> npt.NDArray[np.floating]:
