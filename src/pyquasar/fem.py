@@ -202,6 +202,8 @@ class FemBase3D(FemBase):
     self._dir1 = elements_verts[:, 1] - self.center
     self._dir2 = elements_verts[:, 2] - self.center
     self._dir3 = elements_verts[:, 3] - self.center
+    self._dir4 = elements_verts[:, 2] - elements_verts[:, 1]
+    self._dir5 = elements_verts[:, 3] - elements_verts[:, 1]
     normal = np.cross(self.dir1, self.dir2).reshape(self.center.shape[0], -1)
     self._J = np.sum(normal * self.dir3, axis=-1)[:, None]
     self._contradir = [
@@ -232,6 +234,16 @@ class FemBase3D(FemBase):
     return self._dir3
 
   @property
+  def dir4(self) -> npt.NDArray[np.floating]:
+    """The fourth direction of the element vertices."""
+    return self._dir4
+
+  @property
+  def dir5(self) -> npt.NDArray[np.floating]:
+    """The fifth direction of the element vertices."""
+    return self._dir5
+
+  @property
   def J(self) -> npt.NDArray[np.floating]:
     """The Jacobian of the elements."""
     return self._J
@@ -248,7 +260,7 @@ class FemBase3D(FemBase):
 
   def diameter(self) -> tuple[np.floating, np.floating]:
     """Returns domain diameter and its element."""
-    return np.sum(self.J) ** 0.5, np.mean(self.J) ** 0.5
+    return np.sum(self.J) ** (1 / 3), np.mean(self.J) ** (1 / 3)
 
 
 class FemLine2(FemBase1D):
@@ -557,3 +569,34 @@ class FemTetrahedron4(FemBase3D):
     else:
       f = np.asarray(func, dtype=np.float64)
     return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+  def project_into(self, points: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
+    normal12 = self.contradir[2].reshape(self.center.shape[0], -1)
+    normal13 = self.contradir[1].reshape(self.center.shape[0], -1)
+    normal23 = self.contradir[0].reshape(self.center.shape[0], -1)
+    normal45 = np.cross(self.dir5, self.dir4).reshape(self.center.shape[0], -1)
+
+    dirc0 = points[:, None, :] - self.center[None, :, :]
+    dirc1 = points[:, None, :] - (self.dir1 + self.center)[None, :, :]
+
+    first_face = np.sum(normal12[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    second_face = np.sum(normal13[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    third_face = np.sum(normal23[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    fourth_face = np.sum(normal45[None, :, :] * dirc1, axis=-1) >= 0  # shape: N_p, N_e
+
+    faces_test = np.array([first_face, second_face, third_face, fourth_face])
+    points_ids, elements_ids = np.nonzero(np.all(faces_test, axis=0))
+    vec = points[points_ids] - self.center[elements_ids]
+    master_points = np.sum(vec[None, :] * self.contradir[:, elements_ids], axis=-1).T * self.J[elements_ids]
+    basis_values = np.array(
+      [
+        1 - master_points[:, 0] - master_points[:, 1] - master_points[:, 2],
+        master_points[:, 0],
+        master_points[:, 1],
+        master_points[:, 2],
+      ]
+    )
+    i = np.repeat(points_ids, 4)
+    j = self.elements[elements_ids].flatten()
+    data = basis_values.flatten()
+    return sparse.coo_array((data, (i, j)), shape=shape)

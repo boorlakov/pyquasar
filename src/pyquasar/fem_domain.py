@@ -4,7 +4,7 @@ import numpy as np
 from scipy import sparse
 
 from .fem import FemLine2, FemTriangle3, FemTetrahedron4
-from .mesh import MeshDomain, MeshBlock
+from .mesh import MeshDomain, MeshBlock, MeshBoundary
 import numpy.typing as npt
 
 
@@ -41,7 +41,7 @@ class FemDomain:
     return self._mesh.elements
 
   @property
-  def boundaries(self) -> list[MeshBlock]:
+  def boundaries(self) -> list[MeshBoundary]:
     """Boundary elements of the FEM domain."""
     return self._mesh.boundaries
 
@@ -65,6 +65,14 @@ class FemDomain:
     """Global stiffness matrix of the FEM domain."""
     if hasattr(self, "_stiffness_matrix"):
       return self._stiffness_matrix
+    else:
+      raise AttributeError("Domain is not assembled yet.")
+
+  @property
+  def mass_matrix(self) -> sparse.csc_matrix:
+    """Global mass matrix of the FEM domain."""
+    if hasattr(self, "_mass_matrix"):
+      return self._mass_matrix
     else:
       raise AttributeError("Domain is not assembled yet.")
 
@@ -127,7 +135,7 @@ class FemDomain:
   def __repr__(self) -> str:
     PAD = "\n\t"
     repr_str = f"<FemDomain object summary{PAD}DOF: {self.dof_count}{PAD}External DOF: {self.ext_dof_count}"
-    if self.stiffness_matrix is not None:
+    if hasattr(self, "_stiffness_matrix"):
       assembled = True
     else:
       assembled = False
@@ -192,8 +200,11 @@ class FemDomain:
     """
     self._load_vector = np.zeros(self.dof_count)
     self._corr_vector = np.zeros_like(self.load_vector)
+
     self._kernel = np.ones((1, self.load_vector.size))  # only for Lagrange basis
+
     lambda_ = material_dict.get("lambda", 1)
+    gamma = material_dict.get("gamma", None)
 
     for boundary in self.boundaries:
       if f := material_dict.get(boundary.type):
@@ -203,14 +214,18 @@ class FemDomain:
     diameters = []
     self._scaling = np.full(self.ext_dof_count, lambda_)
     self._stiffness_matrix = sparse.coo_array((self.dof_count, self.dof_count))
+    self._mass_matrix = sparse.coo_array((self.dof_count, self.dof_count))
     for fe in map(self.fabric, self.elements):
-      self._stiffness_matrix += lambda_ * fe.stiffness_matrix(self._stiffness_matrix.shape)
+      self._stiffness_matrix += lambda_ * fe.stiffness_matrix(self.stiffness_matrix.shape)
+      if gamma:
+        self._mass_matrix += gamma * fe.mass_matrix(self.mass_matrix.shape)
       self._corr_vector += fe.load_vector(1, self.corr_vector.shape)
       diameters.append(fe.diameter())
       if f := material_dict.get(self.material):
         self._load_vector += fe.load_vector(f, self.load_vector.shape)
     self._diameter = ((sum_d := sum(D for D, _ in diameters)), sum(d * D for D, d in diameters) / sum_d)
     self._stiffness_matrix = self._stiffness_matrix.tocsc()
+    self._mass_matrix = self._mass_matrix.tocsc()
 
   def decompose(self) -> None:
     """Compute the factorization of the global matrix."""
@@ -267,3 +282,9 @@ class FemDomain:
 
   def calc_solution(self, sol: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
     return sol
+
+  def project_into(self, points: npt.NDArray[np.floating]) -> sparse.coo_matrix:
+    proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
+    for fe in map(self.fabric, self.elements):
+      proj_matrix += fe.project_into(points, (points.shape[0], self.dof_count))
+    return proj_matrix
