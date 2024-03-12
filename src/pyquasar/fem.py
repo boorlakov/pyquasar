@@ -586,6 +586,7 @@ class FemTetrahedron4(FemBase3D):
 
     faces_test = np.array([first_face, second_face, third_face, fourth_face])
     points_ids, elements_ids = np.nonzero(np.all(faces_test, axis=0))
+    points_ids, elements_ids = np.unique(points_ids, return_index=True)
     vec = points[points_ids] - self.center[elements_ids]
     master_points = np.sum(vec[None, :] * self.contradir[:, elements_ids], axis=-1).T
     basis_values = np.array(

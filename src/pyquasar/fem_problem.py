@@ -90,12 +90,11 @@ class FemProblem:
       self._matrix += domain.stiffness_matrix + domain.mass_matrix
       self._load_vector += domain.load_vector
 
-  def project_into(self, points: npt.NDArray[np.floating], solution: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+  def project_into(self, points: npt.NDArray[np.floating]) -> sparse.csr_array:
     proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
     for domain in self.domains:
       proj_matrix += domain.project_into(points)
-    proj_matrix = proj_matrix.tocsr()
-    return proj_matrix @ solution
+    return proj_matrix.tocsr()
 
   def solve(self, rtol: float = 1e-15, atol: float = 0, verbose: bool = False) -> npt.NDArray[np.floating]:
     i = 0
