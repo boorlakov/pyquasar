@@ -12,6 +12,7 @@ class FemProblem:
     self._domains = domains
     self._dim = domains[0].vertices.shape[-1]
     self._dirichlet = False
+    self._factorized = False
 
   @property
   def domains(self) -> list[FemDomain]:
@@ -35,13 +36,13 @@ class FemProblem:
           proj_matrix += fe.mass_matrix(proj_matrix.shape)
           proj_vector += fe.load_vector(func, size)
 
+    proj_matrix = proj_matrix.tocsr()
     diag = proj_matrix.diagonal() + 1e-30
-    self._proj, exit = sparse.linalg.cg(
-      proj_matrix.tocsr(), proj_vector, M=sparse.diags(np.where(diag != 0, 1 / diag, 1)), rtol=1e-12, atol=0
-    )
+    self._proj, exit = sparse.linalg.cg(proj_matrix, proj_vector, M=sparse.diags(np.where(diag != 0, 1 / diag, 1)), rtol=1e-12, atol=0)
     assert exit == 0, exit
 
-    self._load_vector -= self.matrix @ self._proj
+    self._proj_elimination = self._matrix @ self._proj
+    self._load_vector -= self._proj_elimination
 
     boundary_ids = []
     for domain in self.domains:
@@ -49,12 +50,14 @@ class FemProblem:
         for element in boundary.elements:
           boundary_ids.append(element.node_tags.flatten())
     boundary_ids = np.unique(np.concatenate(boundary_ids))
+    self.boundary_ids = boundary_ids
     self._matrix = self.matrix.tocsr()
     for i in boundary_ids:
       self._matrix.data[self._matrix.indptr[i] : self._matrix.indptr[i + 1]] = 0.0
     self._matrix = self.matrix.tocsc()
     for i in boundary_ids:
       self._matrix.data[self._matrix.indptr[i] : self._matrix.indptr[i + 1]] = 0.0
+    self._matrix[boundary_ids, boundary_ids] = 1.0
     self._matrix.eliminate_zeros()
     self._load_vector[boundary_ids] = 0
     self._dirichlet = True
@@ -90,6 +93,18 @@ class FemProblem:
       self._matrix += domain.stiffness_matrix + domain.mass_matrix
       self._load_vector += domain.load_vector
 
+  def reassembly_load(self, material: dict) -> None:
+    self._load_vector = np.zeros(self.dof_count)
+    for domain in self.domains:
+      domain.reassembly_load(material.get(domain.material, {}))
+      self._load_vector += domain.load_vector
+    self._load_vector -= self._proj_elimination
+    self._load_vector[self.boundary_ids] = 0
+
+  def factorize(self) -> None:
+    self._factorized = True
+    self._factor = sparse.linalg.factorized(self.matrix)
+
   def project_into(self, points: npt.NDArray[np.floating]) -> sparse.csr_array:
     proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
     for domain in self.domains:
@@ -112,6 +127,9 @@ class FemProblem:
 
   def solve(self, rtol: float = 1e-15, atol: float = 0, verbose: bool = False) -> npt.NDArray[np.floating]:
     i = 0
+
+    if self._factorized:
+      return self._factor(self.load_vector) + self._proj if self._dirichlet else self._factor(self.load_vector)
 
     def count_iter(x):
       nonlocal i

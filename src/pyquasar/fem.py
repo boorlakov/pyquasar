@@ -350,7 +350,7 @@ class FemLine2(FemBase1D):
     if callable(func):
       f = func(self.center[:, None] + self.quad_points[None, :, 0, None] * self.dir[:, None], self.normal[:, None])
     else:
-      f = np.asarray(func, dtype=np.float_)
+      f = np.asarray(func, dtype=np.float64)
     return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
 
   def load_grad_vector(

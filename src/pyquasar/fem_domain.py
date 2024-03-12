@@ -227,6 +227,18 @@ class FemDomain:
     self._stiffness_matrix = self._stiffness_matrix.tocsc()
     self._mass_matrix = self._mass_matrix.tocsc()
 
+  def reassembly_load(self, material_dict) -> None:
+    self._load_vector = np.zeros(self.dof_count)
+
+    for boundary in self.boundaries:
+      if f := material_dict.get(boundary.type):
+        for fe in map(self.fabric, boundary.elements):
+          self._load_vector += np.sign(boundary.tag) * fe.load_vector(f, self.load_vector.shape)
+
+    for fe in map(self.fabric, self.elements):
+      if f := material_dict.get(self.material):
+        self._load_vector += fe.load_vector(f, self.load_vector.shape)
+
   def decompose(self) -> None:
     """Compute the factorization of the global matrix."""
     a = self._stiffness_matrix[0, 0]
