@@ -586,7 +586,8 @@ class FemTetrahedron4(FemBase3D):
 
     faces_test = np.array([first_face, second_face, third_face, fourth_face])
     points_ids, elements_ids = np.nonzero(np.all(faces_test, axis=0))
-    points_ids, elements_ids = np.unique(points_ids, return_index=True)
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
     vec = points[points_ids] - self.center[elements_ids]
     master_points = np.sum(vec[None, :] * self.contradir[:, elements_ids], axis=-1).T
     basis_values = np.array(
@@ -601,3 +602,57 @@ class FemTetrahedron4(FemBase3D):
     j = self.elements[elements_ids].flatten()
     data = basis_values.flatten()
     return sparse.coo_array((data, (i, j)), shape=shape)
+
+  def project_grad_into(
+    self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
+  ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
+    normal12 = self.contradir[2].reshape(self.center.shape[0], -1)
+    normal13 = self.contradir[1].reshape(self.center.shape[0], -1)
+    normal23 = self.contradir[0].reshape(self.center.shape[0], -1)
+    normal45 = np.cross(self.dir5, self.dir4).reshape(self.center.shape[0], -1)
+
+    dirc0 = points[:, None, :] - self.center[None, :, :]
+    dirc1 = points[:, None, :] - (self.dir1 + self.center)[None, :, :]
+
+    first_face = np.sum(normal12[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    second_face = np.sum(normal13[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    third_face = np.sum(normal23[None, :, :] * dirc0, axis=-1) >= 0  # shape: N_p, N_e
+    fourth_face = np.sum(normal45[None, :, :] * dirc1, axis=-1) >= 0  # shape: N_p, N_e
+
+    faces_test = np.array([first_face, second_face, third_face, fourth_face])
+    points_ids, elements_ids = np.nonzero(np.all(faces_test, axis=0))
+    points_ids, elements_ids = np.unique(points_ids, return_index=True)
+    ones = np.ones_like(points_ids)
+    zeros = np.zeros_like(points_ids)
+    grad = np.array(
+      [
+        [
+          -ones,
+          ones,
+          zeros,
+          zeros,
+        ],
+        [
+          -ones,
+          zeros,
+          ones,
+          zeros,
+        ],
+        [
+          -ones,
+          zeros,
+          zeros,
+          ones,
+        ],
+      ]
+    )
+    grad_x_cart = np.sum(self.contradir[:, elements_ids][:, None, :, 0] * grad, axis=0).T
+    grad_y_cart = np.sum(self.contradir[:, elements_ids][:, None, :, 1] * grad, axis=0).T
+    grad_z_cart = np.sum(self.contradir[:, elements_ids][:, None, :, 2] * grad, axis=0).T
+    i = np.repeat(points_ids, 4)
+    j = self.elements[elements_ids].flatten()
+    return (
+      sparse.coo_array((grad_x_cart.flatten(), (i, j)), shape=shape),
+      sparse.coo_array((grad_y_cart.flatten(), (i, j)), shape=shape),
+      sparse.coo_array((grad_z_cart.flatten(), (i, j)), shape=shape),
+    )

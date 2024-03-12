@@ -288,3 +288,16 @@ class FemDomain:
     for fe in map(self.fabric, self.elements):
       proj_matrix += fe.project_into(points, (points.shape[0], self.dof_count))
     return proj_matrix
+
+  def project_grad_into(self, points: npt.NDArray[np.floating]) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
+    proj_x, prog_y, proj_z = (
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+    )
+    for fe in map(self.fabric, self.elements):
+      proj_grad = fe.project_grad_into(points, (points.shape[0], self.dof_count))
+      proj_x += proj_grad[0]
+      prog_y += proj_grad[1]
+      proj_z += proj_grad[2]
+    return proj_x, prog_y, proj_z

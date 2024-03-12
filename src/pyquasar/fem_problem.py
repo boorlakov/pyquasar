@@ -94,7 +94,21 @@ class FemProblem:
     proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
     for domain in self.domains:
       proj_matrix += domain.project_into(points)
+    proj_matrix = proj_matrix / proj_matrix.sum(axis=1)[:, None]
     return proj_matrix.tocsr()
+
+  def project_grad_into(self, points: npt.NDArray[np.floating]) -> tuple[sparse.csr_array, sparse.csr_array, sparse.csr_array]:
+    proj_x, proj_y, proj_z = (
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+    )
+    for domain in self.domains:
+      proj_grad = domain.project_grad_into(points)
+      proj_x += proj_grad[0]
+      proj_y += proj_grad[1]
+      proj_z += proj_grad[2]
+    return proj_x.tocsr(), proj_y.tocsr(), proj_z.tocsr()
 
   def solve(self, rtol: float = 1e-15, atol: float = 0, verbose: bool = False) -> npt.NDArray[np.floating]:
     i = 0
