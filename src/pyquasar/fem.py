@@ -621,7 +621,8 @@ class FemTetrahedron4(FemBase3D):
 
     faces_test = np.array([first_face, second_face, third_face, fourth_face])
     points_ids, elements_ids = np.nonzero(np.all(faces_test, axis=0))
-    points_ids, elements_ids = np.unique(points_ids, return_index=True)
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
     ones = np.ones_like(points_ids)
     zeros = np.zeros_like(points_ids)
     grad = np.array(
