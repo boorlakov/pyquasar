@@ -31,6 +31,6 @@ Plane Surface(4) = {4};
 Surface Loop(1) = {3, 4, 1, 2};
 Volume(1) = {1};
 
-Physical Surface("neumann", 7) = {2, 4, 3};
-Physical Surface("dirichlet", 9) = {1};
+Physical Surface("neumann", 7) = {1, 2, 4, 3};
+// Physical Surface("dirichlet", 9) = {1};
 Physical Volume("steel", 8) = {1};

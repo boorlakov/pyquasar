@@ -1,5 +1,6 @@
 from itertools import cycle
-
+from typing import Optional
+from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
 from scipy import sparse
@@ -93,37 +94,59 @@ class FemProblem:
       self._matrix += domain.stiffness_matrix + domain.mass_matrix
       self._load_vector += domain.load_vector
 
-  def reassembly_load(self, material: dict) -> None:
-    self._load_vector = np.zeros(self.dof_count)
-    for domain in self.domains:
-      domain.reassembly_load(material.get(domain.material, {}))
-      self._load_vector += domain.load_vector
-    self._load_vector -= self._proj_elimination
-    self._load_vector[self.boundary_ids] = 0
-
   def factorize(self) -> None:
     self._factorized = True
     self._factor = sparse.linalg.factorized(self.matrix)
 
-  def project_into(self, points: npt.NDArray[np.floating]) -> sparse.csr_array:
+  def project_into(self, points: npt.NDArray[np.floating], batch_size: Optional[int] = None) -> sparse.csr_array:
     proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
+    if batch_size is None:
+      batch_size = points.shape[0]
+    num_batches = points.shape[0] // batch_size + 1
+    proj_matrix_list = []
     for domain in self.domains:
-      proj_matrix += domain.project_into(points)
+      if batch_size is not None:
+        for i in tqdm(range(num_batches)):
+          proj_matrix_list.append(domain.project_into(points[i * batch_size : (i + 1) * batch_size]))
+        proj_matrix += sparse.vstack(proj_matrix_list)
     proj_matrix = proj_matrix / proj_matrix.sum(axis=1)[:, None]
     return proj_matrix.tocsr()
 
-  def project_grad_into(self, points: npt.NDArray[np.floating]) -> tuple[sparse.csr_array, sparse.csr_array, sparse.csr_array]:
-    proj_x, proj_y, proj_z = (
-      sparse.coo_array((points.shape[0], self.dof_count)),
-      sparse.coo_array((points.shape[0], self.dof_count)),
-      sparse.coo_array((points.shape[0], self.dof_count)),
-    )
+  def mass_boundary(self, material_filter: list[str]) -> npt.NDArray[np.floating]:
+    # TODO: change shape (boundary_indices -> only Neumann BCs)
+    shape = self.dof_count, self.domains[0].boundary_indices.size
+    mass_boundary = sparse.coo_matrix(shape)
     for domain in self.domains:
-      proj_grad = domain.project_grad_into(points)
-      proj_x += proj_grad[0]
-      proj_y += proj_grad[1]
-      proj_z += proj_grad[2]
-    return proj_x.tocsr(), proj_y.tocsr(), proj_z.tocsr()
+      for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
+        for element in boundary.elements:
+          fe = domain.fabric(element)
+          mass_boundary += np.sign(boundary.tag) * fe.mass_matrix(shape)
+    return mass_boundary
+
+  def project_grad_into(
+    self, points: npt.NDArray[np.floating], batch_size: Optional[int] = None
+  ) -> tuple[sparse.csr_array, sparse.csr_array, sparse.csr_array]:
+    proj_x, proj_y, proj_z = (
+      sparse.csr_array((points.shape[0], self.dof_count)),
+      sparse.csr_array((points.shape[0], self.dof_count)),
+      sparse.csr_array((points.shape[0], self.dof_count)),
+    )
+    if batch_size is None:
+      batch_size = points.shape[0]
+    num_batches = points.shape[0] // batch_size + 1
+    proj_x_list, proj_y_list, proj_z_list = [], [], []
+    for domain in self.domains:
+      if batch_size is not None:
+        for i in tqdm(range(num_batches)):
+          proj_grad = domain.project_grad_into(points[i * batch_size : (i + 1) * batch_size])
+          proj_x_list.append(proj_grad[0])
+          proj_y_list.append(proj_grad[1])
+          proj_z_list.append(proj_grad[2])
+        proj_x += sparse.vstack(proj_x_list)
+        proj_y += sparse.vstack(proj_y_list)
+        proj_z += sparse.vstack(proj_z_list)
+        proj_x_list, proj_y_list, proj_z_list = [], [], []
+    return proj_x, proj_y, proj_z
 
   def solve(self, rtol: float = 1e-15, atol: float = 0, verbose: bool = False) -> npt.NDArray[np.floating]:
     i = 0
