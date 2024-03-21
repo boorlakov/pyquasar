@@ -113,8 +113,13 @@ class FemProblem:
     return proj_matrix.tocsr()
 
   def mass_boundary(self, material_filter: list[str]) -> npt.NDArray[np.floating]:
-    # TODO: change shape (boundary_indices -> only Neumann BCs)
-    shape = self.dof_count, self.domains[0].boundary_indices.size
+    neumann_bcs = []
+    for domain in self.domains:
+      for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
+        for element in boundary.elements:
+          neumann_bcs.append(element.node_tags.ravel())
+    neumann_bcs = np.unique(np.concatenate(neumann_bcs)).size
+    shape = self.dof_count, neumann_bcs
     mass_boundary = sparse.coo_matrix(shape)
     for domain in self.domains:
       for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
