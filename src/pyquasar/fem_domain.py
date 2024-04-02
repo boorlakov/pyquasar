@@ -3,7 +3,7 @@ from typing import Optional, Callable
 import numpy as np
 from scipy import sparse
 
-from .fem import FemLine2, FemTriangle3, FemTetrahedron4
+from .fem import FemLine2, FemTriangle3, FemTetrahedron4, FemLine3NC, FemTriangle6NC, FemTetrahedron10NC
 from .mesh import MeshDomain, MeshBlock, MeshBoundary
 import numpy.typing as npt
 
@@ -48,7 +48,7 @@ class FemDomain:
   @property
   def dof_count(self) -> int:
     """Number of degrees of freedom."""
-    return self._mesh.vertices.shape[0]
+    return self._mesh.dof_count
 
   @property
   def ext_dof_count(self) -> int:
@@ -168,7 +168,7 @@ class FemDomain:
     ValueError
       If the element type is not supported.
     """
-    indices = self.boundary_indices[block.node_tags] if ext else block.node_tags
+    indices = self.boundary_indices[block.basis_tags] if ext else block.basis_tags
     match block.type:
       case "Line 2":
         return FemLine2(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
@@ -176,6 +176,12 @@ class FemDomain:
         return FemTriangle3(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case "Tetrahedron 4":
         return FemTetrahedron4(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Line 3 NC":
+        return FemLine3NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Triangle 6 NC":
+        return FemTriangle6NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Tetrahedron 10 NC":
+        return FemTetrahedron10NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case _:
         raise ValueError(f"Unsupported element type {block.type}")
 

@@ -381,6 +381,138 @@ class FemLine2(FemBase1D):
     )
 
 
+class FemLine3NC(FemBase1D):
+  """Represents a finite element line in a 2D space."""
+
+  def __init__(
+    self,
+    elements_verts: npt.NDArray[np.floating],
+    elements: npt.NDArray[np.signedinteger],
+    quad_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating],
+  ):
+    super().__init__(elements_verts, elements, quad_points, weights)
+    self._psi = np.array(
+      [
+        2 * (self.quad_points[:, 0] - 0.5) * (self.quad_points[:, 0] - 1),
+        2 * self.quad_points[:, 0] * (self.quad_points[:, 0] - 0.5),
+        -4 * self.quad_points[:, 0] * (self.quad_points[:, 0] - 1),
+      ]
+    )
+    self._psi_grad = np.array(
+      [
+        4 * self.quad_points[:, 0] - 3,
+        4 * self.quad_points[:, 0] - 1,
+        -8 * self.quad_points[:, 0] + 4,
+      ]
+    )
+
+  @property
+  def psi(self) -> npt.NDArray[np.floating]:
+    """The basis functions of the finite element line."""
+    return self._psi
+
+  @property
+  def psi_grad(self) -> npt.NDArray[np.floating]:
+    """The gradient of the basis functions of the finite element line."""
+    return self._psi_grad
+
+  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the mass matrix for the finite element line.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the mass matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+
+  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the stiffness matrix for the finite element line.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the stiffness matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    return self.matrix(self.J[..., None] * ((self.psi_grad[None, :] * self.psi_grad[:, None]) @ self.weights), shape)
+
+  def skew_grad_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the skew gradient matrix for the finite element line.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the skew gradient matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    # NOTE: Need to fix it later from Line2 to Line3NC
+    return self.matrix(np.ones_like(self.J[..., None]) * ((self.psi[None, :] * self.psi_grad[:, None]) @ self.weights), shape)
+
+  def load_vector(
+    self,
+    func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
+    shape: tuple[int, ...],
+  ) -> npt.NDArray[np.floating]:
+    """Compute the load vector for the finite element line.
+
+    Parameters
+    ----------
+    func : Callable or ArrayLike
+      The function or array-like object representing the load.
+    shape : tuple[int, ...]
+      The shape of the load vector.
+
+    Returns
+    -------
+    NDArray[float]
+    """
+    if callable(func):
+      f = func(self.center[:, None] + self.quad_points[None, :, 0, None] * self.dir[:, None], self.normal[:, None])
+    else:
+      f = np.asarray(func, dtype=np.float64)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+  def load_grad_vector(
+    self,
+    func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
+    shape: tuple[int, ...],
+  ) -> npt.NDArray[np.floating]:
+    """Compute the load gradient vector for the finite element line.
+
+    Parameters
+    ----------
+    func : Callable or ArrayLike
+      The function or array-like object representing the load.
+    shape : tuple[int, ...]
+      The shape of the load vector.
+
+    Returns
+    -------
+    NDArray[float]
+    """
+    # NOTE: Need to fix it later from Line2 to Line3NC
+    if callable(func):
+      f = func(self.center[:, None] + self.quad_points[None, :, 0, None] * self.dir[:, None], self.normal[:, None])
+    else:
+      f = np.asarray(func, dtype=np.float_)
+    return self.vector(
+      (self.psi_grad * np.sum(np.sum(self.dir[:, None] * np.atleast_1d(f), axis=-1) * self.weights, axis=-1)[:, None]) / self.J,
+      shape,
+    )
+
+
 class FemTriangle3(FemBase2D):
   """Represents a finite element triangle with 3 nodes in a 2D space."""
 
@@ -444,6 +576,128 @@ class FemTriangle3(FemBase2D):
     """
     S = 0.5 * self.psi_grad[:, None, :, None] * self.psi_grad[None, :, None, :]
     return self.matrix(self.J[..., None] * np.sum(self.contrametric[:, :, None, None] * S[..., None], axis=(0, 1)).T, shape)
+
+  def load_vector(
+    self,
+    func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
+    shape: tuple[int, ...],
+  ) -> npt.NDArray[np.floating]:
+    """Compute the load vector for the finite element triangle.
+
+    Parameters
+    ----------
+    func : Callable or ArrayLike
+      The function or array-like object representing the load.
+    shape : tuple[int, ...]
+      The shape of the load vector.
+
+    Returns
+    -------
+    NDArray[float]
+    """
+    if callable(func):
+      point = (
+        self.center[:, None]
+        + self.quad_points[None, :, 0, None] * self.dir1[:, None]
+        + self.quad_points[None, :, 1, None] * self.dir2[:, None]
+      )
+      f = func(point, self.normal[:, None])
+    else:
+      f = np.asarray(func, dtype=np.float_)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+
+class FemTriangle6NC(FemBase2D):
+  """Represents a finite element triangle with 3 nodes in a 2D space."""
+
+  def __init__(
+    self,
+    elements_verts: npt.NDArray[np.floating],
+    elements: npt.NDArray[np.signedinteger],
+    quad_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating],
+  ):
+    super().__init__(elements_verts, elements, quad_points, weights)
+    L_coords = np.array(
+      [
+        1 - self.quad_points[:, 0] - self.quad_points[:, 1],
+        self.quad_points[:, 0],
+        self.quad_points[:, 1],
+      ]
+    )
+    self._psi = np.array(
+      [
+        L_coords[0] * (2 * L_coords[0] - 1),
+        L_coords[1] * (2 * L_coords[1] - 1),
+        L_coords[2] * (2 * L_coords[2] - 1),
+        4 * L_coords[0] * L_coords[1],
+        4 * L_coords[1] * L_coords[2],
+        4 * L_coords[2] * L_coords[0],
+      ]
+    )
+    self._psi_grad = np.array(
+      [
+        [
+          -4 * L_coords[0] + 1,
+          4 * L_coords[1] - 1,
+          np.zeros_like(L_coords[0]),
+          4 * (L_coords[0] - L_coords[1]),
+          4 * L_coords[2],
+          -4 * L_coords[2],
+        ],
+        [
+          -4 * L_coords[0] + 1,
+          np.zeros_like(L_coords[0]),
+          4 * L_coords[2] - 1,
+          -4 * L_coords[1],
+          4 * L_coords[1],
+          4 * (L_coords[0] - L_coords[2]),
+        ],
+      ]
+    )
+
+  @property
+  def psi(self) -> npt.NDArray[np.floating]:
+    """The basis functions of the finite element triangle."""
+    return self._psi
+
+  @property
+  def psi_grad(self) -> npt.NDArray[np.floating]:
+    """The gradient of the basis functions of the finite element triangle."""
+    return self._psi_grad
+
+  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the mass matrix for the finite element triangle.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the mass matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+
+  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the stiffness matrix for the finite element triangle.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the stiffness matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    expanded_psi_grad1 = self.psi_grad[:, None, None, :, None, :]
+    expanded_psi_grad2 = self.psi_grad[None, :, None, None, :, :]
+    expanded_contrametric = self.contrametric[..., None, None, None]
+    gradient_prod = np.sum(expanded_psi_grad1 * expanded_psi_grad2 * expanded_contrametric, axis=(0, 1))
+    G = gradient_prod @ self.weights
+    return self.matrix(self.J[..., None] * G, shape)
 
   def load_vector(
     self,
@@ -628,6 +882,259 @@ class FemTetrahedron4(FemBase3D):
     )
     grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
     i = np.repeat(points_ids, 4)
+    j = self.elements[elements_ids].ravel()
+    return (
+      sparse.coo_array((grad_cart[0].ravel(), (i, j)), shape=shape),
+      sparse.coo_array((grad_cart[1].ravel(), (i, j)), shape=shape),
+      sparse.coo_array((grad_cart[2].ravel(), (i, j)), shape=shape),
+    )
+
+
+class FemTetrahedron10NC(FemBase3D):
+  def __init__(
+    self,
+    elements_verts: npt.NDArray[np.floating],
+    elements: npt.NDArray[np.signedinteger],
+    quad_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating],
+  ):
+    super().__init__(elements_verts, elements, quad_points, weights)
+    L_coords = np.array(
+      [
+        1 - self.quad_points[:, 0] - self.quad_points[:, 1] - self.quad_points[:, 2],
+        self.quad_points[:, 0],
+        self.quad_points[:, 1],
+        self.quad_points[:, 2],
+      ]
+    )
+
+    self._psi = np.array(
+      [
+        L_coords[0] * (2 * L_coords[0] - 1),
+        L_coords[1] * (2 * L_coords[1] - 1),
+        L_coords[2] * (2 * L_coords[2] - 1),
+        L_coords[3] * (2 * L_coords[3] - 1),
+        4 * L_coords[0] * L_coords[1],
+        4 * L_coords[1] * L_coords[2],
+        4 * L_coords[0] * L_coords[2],
+        4 * L_coords[0] * L_coords[3],
+        4 * L_coords[2] * L_coords[3],
+        4 * L_coords[1] * L_coords[3],
+      ]
+    )
+    self._psi_grad = np.array(
+      [
+        [
+          -4 * L_coords[0] + 1,
+          4 * L_coords[1] - 1,
+          np.zeros_like(L_coords[0]),
+          np.zeros_like(L_coords[0]),
+          4 * (L_coords[0] - L_coords[1]),
+          4 * L_coords[2],
+          -4 * L_coords[2],
+          -4 * L_coords[3],
+          np.zeros_like(L_coords[0]),
+          4 * L_coords[3],
+        ],
+        [
+          -4 * L_coords[0] + 1,
+          np.zeros_like(L_coords[0]),
+          4 * L_coords[2] - 1,
+          np.zeros_like(L_coords[0]),
+          -4 * L_coords[1],
+          4 * L_coords[1],
+          4 * (L_coords[0] - L_coords[2]),
+          -4 * L_coords[3],
+          4 * L_coords[3],
+          np.zeros_like(L_coords[0]),
+        ],
+        [
+          -4 * L_coords[0] + 1,
+          np.zeros_like(L_coords[0]),
+          np.zeros_like(L_coords[0]),
+          4 * L_coords[3] - 1,
+          -4 * L_coords[1],
+          np.zeros_like(L_coords[0]),
+          -4 * L_coords[2],
+          4 * (L_coords[0] - L_coords[3]),
+          4 * L_coords[2],
+          4 * L_coords[1],
+        ],
+      ],
+      dtype=self.psi.dtype,
+    )
+
+  @property
+  def psi(self) -> npt.NDArray[np.floating]:
+    """The basis functions of the finite element tetrahedron."""
+    return self._psi
+
+  @property
+  def psi_grad(self) -> npt.NDArray[np.floating]:
+    """The gradient of the basis functions of the finite element tetrahedron."""
+    return self._psi_grad
+
+  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the mass matrix for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the mass matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+
+  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+    """Compute the stiffness matrix for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+      The shape of the stiffness matrix.
+
+    Returns
+    -------
+    coo_array
+    """
+    expanded_psi_grad1 = self.psi_grad[:, None, None, :, None, :]
+    expanded_psi_grad2 = self.psi_grad[None, :, None, None, :, :]
+    expanded_contrametric = self.contrametric[..., None, None, None]
+    gradient_prod = np.sum(expanded_psi_grad1 * expanded_psi_grad2 * expanded_contrametric, axis=(0, 1))
+    G = gradient_prod @ self.weights
+    return self.matrix(self.J[..., None] * G, shape)
+
+  def load_vector(
+    self,
+    func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
+    shape: tuple[int, ...],
+  ) -> npt.NDArray[np.floating]:
+    """Compute the load vector for the finite element tetrahedron.
+
+    Parameters
+    ----------
+    func : Callable or ArrayLike
+      The function or array-like object representing the load.
+    shape : tuple[int, ...]
+      The shape of the load vector.
+
+    Returns
+    -------
+    NDArray[float]
+    """
+    if callable(func):
+      point = (
+        self.center[:, None]
+        + self.quad_points[None, :, 0, None] * self.dir1[:, None]
+        + self.quad_points[None, :, 1, None] * self.dir2[:, None]
+        + self.quad_points[None, :, 2, None] * self.dir3[:, None]
+      )
+      f = func(point, 0)
+    else:
+      f = np.asarray(func, dtype=np.float64)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+  def project_into(self, points: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
+    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
+    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    eps = 1e-15
+    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
+    master_points = master_points[elements_ids, points_ids]
+
+    L_values = np.array(
+      [
+        1 - master_points[:, 0] - master_points[:, 1] - master_points[:, 2],
+        master_points[:, 0],
+        master_points[:, 1],
+        master_points[:, 2],
+      ]
+    )
+    basis_values = np.array(
+      [
+        L_values[0] * (2 * L_values[0] - 1),
+        L_values[1] * (2 * L_values[1] - 1),
+        L_values[2] * (2 * L_values[2] - 1),
+        L_values[3] * (2 * L_values[3] - 1),
+        4 * L_values[0] * L_values[1],
+        4 * L_values[1] * L_values[2],
+        4 * L_values[0] * L_values[2],
+        4 * L_values[0] * L_values[3],
+        4 * L_values[2] * L_values[3],
+        4 * L_values[1] * L_values[3],
+      ]
+    ).T
+    i = np.repeat(points_ids, 10)
+    j = self.elements[elements_ids].ravel()
+    data = basis_values.ravel()
+    return sparse.coo_array((data, (i, j)), shape=shape)
+
+  def project_grad_into(
+    self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
+  ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
+    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
+    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    eps = 1e-15
+    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
+    master_points = master_points[elements_ids, points_ids]
+
+    L_values = np.array(
+      [
+        1 - master_points[:, 0] - master_points[:, 1] - master_points[:, 2],
+        master_points[:, 0],
+        master_points[:, 1],
+        master_points[:, 2],
+      ]
+    )
+    grad = np.array(
+      [
+        [
+          -4 * L_values[0] + 1,
+          4 * L_values[1] - 1,
+          np.zeros_like(L_values[0]),
+          np.zeros_like(L_values[0]),
+          4 * (L_values[0] - L_values[1]),
+          4 * L_values[2],
+          -4 * L_values[2],
+          -4 * L_values[3],
+          np.zeros_like(L_values[0]),
+          4 * L_values[3],
+        ],
+        [
+          -4 * L_values[0] + 1,
+          np.zeros_like(L_values[0]),
+          4 * L_values[2] - 1,
+          np.zeros_like(L_values[0]),
+          -4 * L_values[1],
+          4 * L_values[1],
+          4 * (L_values[0] - L_values[2]),
+          -4 * L_values[3],
+          4 * L_values[3],
+          np.zeros_like(L_values[0]),
+        ],
+        [
+          -4 * L_values[0] + 1,
+          np.zeros_like(L_values[0]),
+          np.zeros_like(L_values[0]),
+          4 * L_values[3] - 1,
+          -4 * L_values[1],
+          np.zeros_like(L_values[0]),
+          -4 * L_values[2],
+          4 * (L_values[0] - L_values[3]),
+          4 * L_values[2],
+          4 * L_values[1],
+        ],
+      ],
+      dtype=self.psi.dtype,
+    )
+    grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
+    i = np.repeat(points_ids, 10)
     j = self.elements[elements_ids].ravel()
     return (
       sparse.coo_array((grad_cart[0].ravel(), (i, j)), shape=shape),

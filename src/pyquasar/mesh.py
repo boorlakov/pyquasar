@@ -13,11 +13,13 @@ class MeshBlock:
     self,
     type: str,
     node_tags: npt.NDArray[np.signedinteger],
+    basis_tags: npt.NDArray[np.signedinteger],
     quad_points: npt.NDArray[np.floating],
     weights: npt.NDArray[np.floating],
   ) -> None:
     self._type = type
     self._node_tags = node_tags
+    self._basis_tags = basis_tags
     self._quad_points = quad_points
     self._weights = weights
 
@@ -30,6 +32,11 @@ class MeshBlock:
   def node_tags(self) -> npt.NDArray[np.signedinteger]:
     """The node tags of the block."""
     return self._node_tags
+
+  @property
+  def basis_tags(self) -> npt.NDArray[np.signedinteger]:
+    """The basis tags of the block."""
+    return self._basis_tags
 
   @property
   def quad_points(self) -> npt.NDArray[np.floating]:
@@ -45,6 +52,7 @@ class MeshBlock:
     return (
       f"MeshBlock(type={repr(self.type)}, "
       f"node_tags={repr(self.node_tags)}, "
+      f"basis_tags={repr(self.basis_tags)}, "
       f"quad_points={repr(self.quad_points)}, "
       f"weights={repr(self.weights)}"
     )
@@ -98,6 +106,7 @@ class MeshDomain:
     self._boundaries = boundaries
     self._boundary_indices = boundary_indices
     self._elements_count = sum(len(element.node_tags) for element in self.elements)
+    self._dof_count = sum(len(np.unique(element.basis_tags)) for element in self.elements)
 
   @property
   def material(self) -> str:
@@ -113,6 +122,11 @@ class MeshDomain:
   def tag(self) -> int:
     """The tag of the domain."""
     return self._tag
+
+  @property
+  def dof_count(self) -> int:
+    """The number of degrees of freedom in the domain."""
+    return self._dof_count
 
   @property
   def vertices(self) -> npt.NDArray[np.floating]:
@@ -228,7 +242,7 @@ class Mesh:
     return self._numeration
 
   @classmethod
-  def load(cls, file: str, refine_k: int = 0, num_part: int = 0):
+  def load(cls, file: str, refine_k: int = 0, num_part: int = 0, use_quadratic: bool = False):
     """Load a mesh from a file and generate domains.
 
     Parameters
@@ -251,31 +265,62 @@ class Mesh:
       assert len(physical_tags) <= 1
       return gmsh.model.get_physical_name(dim, physical_tags[0]) if len(physical_tags) else None
 
-    def generate_block(dim: int, tag: int) -> Generator[MeshBlock, tuple[int, int], None]:
+    def generate_block(dim: int, tag: int, max_node_tag: int) -> Generator[MeshBlock, tuple[int, int], None]:
       for element_type, _, element_node_tags in zip(*gmsh.model.mesh.get_elements(dim, tag)):
         element_name, _, _, num_nodes, *_ = gmsh.model.mesh.get_element_properties(element_type)
+        if use_quadratic:
+          edge_nodes = gmsh.model.mesh.get_element_edge_nodes(element_type, tag)
+          edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+          edge_tags = np.asarray(edge_tags, dtype=np.int64)
+          match element_name:
+            case "Line 2":
+              element_name = "Line 3 NC"
+              edge_tags = (edge_tags - 1)[:, None]
+            case "Triangle 3":
+              element_name = "Triangle 6 NC"
+              edge_tags = edge_tags.reshape(-1, 3) - 1
+            case "Tetrahedron 4":
+              element_name = "Tetrahedron 10 NC"
+              edge_tags = edge_tags.reshape(-1, 6) - 1
+            case _:
+              raise ValueError(f"Element type {element_name} not supported for quadratic basis.")
         element_node_tags = np.asarray(element_node_tags, dtype=np.int64)
         nodes_tags = (element_node_tags - 1).reshape(-1, num_nodes)
+        basis_tags = nodes_tags
+        # edge_tags = np.sort(edge_tags, axis=1)
+        if use_quadratic:
+          basis_tags = np.concatenate([nodes_tags, edge_tags + max_node_tag], axis=1)
         quad_points, weights = gmsh.model.mesh.get_integration_points(element_type, "Gauss4")
-        yield MeshBlock(element_name, nodes_tags, np.asarray(quad_points).reshape(-1, 3)[:, :dim], np.asarray(weights))
+        yield MeshBlock(element_name, nodes_tags, basis_tags, np.asarray(quad_points).reshape(-1, 3)[:, :dim], np.asarray(weights))
 
-    def generate_domain(dim: int, tag: int) -> MeshDomain:
+    def generate_domain(dim: int, tag: int, max_node_tag: int) -> MeshDomain:
       material = get_material(dim, tag)
+
       node_tags, _, _ = gmsh.model.mesh.get_nodes(dim, tag, True, False)
       node_tags = np.asarray(node_tags, dtype=np.int64)
       vertices = np.empty((node_tags.size, dim))
+
       boundary_node_tags, _, _ = gmsh.model.mesh.get_nodes(gmsh.model.get_dimension() - 1, -1, True, False)
       boundary_node_tags = np.asarray(boundary_node_tags, dtype=np.int64)
+
       tags, coords, _ = gmsh.model.mesh.get_nodes(-1, -1, False, False)
       tags = np.asarray(tags, dtype=np.int64)
       coords = np.asarray(coords, dtype=np.float64)
       vertices = coords.reshape(-1, 3)[np.argsort(tags), :dim]
       boundary_indices = np.unique(boundary_node_tags - 1)
 
-      elements = list(generate_block(dim, tag))
+      if use_quadratic:
+        elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+        edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
+        edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+        edge_tags = np.asarray(edge_tags, dtype=np.int64)
+        edge_tags = np.unique(edge_tags)
+        boundary_indices = np.concatenate([boundary_indices, (edge_tags - 1) + max_node_tag])
+
+      elements = list(generate_block(dim, tag, max_node_tag))
       boundaries = []
       for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
-        blocks = list(generate_block(bdim, abs(btag)))
+        blocks = list(generate_block(bdim, abs(btag), max_node_tag))
         assert len(blocks) > 0, (dim, tag)
         boundaries.append(MeshBoundary(get_material(bdim, abs(btag)), btag, blocks))
 
@@ -297,13 +342,18 @@ class Mesh:
         gmsh.model.mesh.refine()
       gmsh.model.mesh.partition(num_part)
 
+      if use_quadratic:
+        gmsh.model.mesh.create_edges()
+
+      node_tags, _, _ = gmsh.model.mesh.get_nodes(-1, -1, True, False)
+      max_node_tag = node_tags.max()
       is_part = gmsh.model.get_number_of_partitions() > 0
       for dim, tag in gmsh.model.get_entities(gmsh.model.get_dimension()):
         if is_part:
           partitions = gmsh.model.get_partitions(dim, tag)
           if not len(partitions):
             continue
-        domains.append(generate_domain(dim, tag))
+        domains.append(generate_domain(dim, tag, max_node_tag))
 
     finally:
       gmsh.clear()
