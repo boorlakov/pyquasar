@@ -117,8 +117,14 @@ class FemProblem:
     for domain in self.domains:
       for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
         for element in boundary.elements:
-          neumann_bcs.append(element.node_tags.ravel())
-    neumann_bcs = np.unique(np.concatenate(neumann_bcs)).size
+          neumann_bcs.append(element.basis_tags.ravel())
+    neumann_bcs = np.unique(np.concatenate(neumann_bcs))
+    compressing_factor = np.ones_like(neumann_bcs)
+    compressed_neumann_bcs = np.arange(neumann_bcs.size)
+    compress_matrix = sparse.coo_matrix(
+      (compressing_factor, (neumann_bcs, compressed_neumann_bcs)), shape=(neumann_bcs.max() + 1, neumann_bcs.size)
+    )
+    neumann_bcs = neumann_bcs.max() + 1
     shape = self.dof_count, neumann_bcs
     mass_boundary = sparse.coo_matrix(shape)
     for domain in self.domains:
@@ -126,7 +132,7 @@ class FemProblem:
         for element in boundary.elements:
           fe = domain.fabric(element)
           mass_boundary += np.sign(boundary.tag) * fe.mass_matrix(shape)
-    return mass_boundary
+    return mass_boundary @ compress_matrix
 
   def project_grad_into(
     self, points: npt.NDArray[np.floating], batch_size: Optional[int] = None
