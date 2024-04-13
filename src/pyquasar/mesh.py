@@ -242,7 +242,7 @@ class Mesh:
     return self._numeration
 
   @classmethod
-  def load(cls, file: str, refine_k: int = 0, num_part: int = 0, use_quadratic: bool = False):
+  def load(cls, file: str, refine_k: int = 0, num_part: int = 0, use_quadratic: bool = False, basis_order: int = 1):
     """Load a mesh from a file and generate domains.
 
     Parameters
@@ -268,29 +268,85 @@ class Mesh:
     def generate_block(dim: int, tag: int, max_node_tag: int) -> Generator[MeshBlock, tuple[int, int], None]:
       for element_type, _, element_node_tags in zip(*gmsh.model.mesh.get_elements(dim, tag)):
         element_name, _, _, num_nodes, *_ = gmsh.model.mesh.get_element_properties(element_type)
-        if use_quadratic:
-          edge_nodes = gmsh.model.mesh.get_element_edge_nodes(element_type, tag)
-          edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
-          edge_tags = np.asarray(edge_tags, dtype=np.int64)
-          match element_name:
-            case "Line 2":
-              element_name = "Line 3 NC"
-              edge_tags = (edge_tags - 1)[:, None]
-            case "Triangle 3":
-              element_name = "Triangle 6 NC"
-              edge_tags = edge_tags.reshape(-1, 3) - 1
-            case "Tetrahedron 4":
-              element_name = "Tetrahedron 10 NC"
-              edge_tags = edge_tags.reshape(-1, 6) - 1
-            case _:
-              raise ValueError(f"Element type {element_name} not supported for quadratic basis.")
+        # if use_quadratic:
+        #   edge_nodes = gmsh.model.mesh.get_element_edge_nodes(element_type, tag)
+        #   edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+        #   edge_tags = np.asarray(edge_tags, dtype=np.int64)
+        #   match element_name:
+        #     case "Line 2":
+        #       element_name = "Line 3 NC"
+        #       edge_tags = (edge_tags - 1)[:, None]
+        #     case "Triangle 3":
+        #       element_name = "Triangle 6 NC"
+        #       edge_tags = edge_tags.reshape(-1, 3) - 1
+        #     case "Tetrahedron 4":
+        #       element_name = "Tetrahedron 10 NC"
+        #       edge_tags = edge_tags.reshape(-1, 6) - 1
+        #     case _:
+        #       raise ValueError(f"Element type {element_name} not supported for quadratic basis.")
+
+        match basis_order:
+          case 2:
+            edge_nodes = gmsh.model.mesh.get_element_edge_nodes(element_type, tag)
+            edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+            edge_tags = np.asarray(edge_tags, dtype=np.int64)
+            match element_name:
+              case "Line 2":
+                element_name = "Line 3 NC"
+                edge_tags = (edge_tags - 1)[:, None]
+              case "Triangle 3":
+                element_name = "Triangle 6 NC"
+                edge_tags = edge_tags.reshape(-1, 3) - 1
+              case "Tetrahedron 4":
+                element_name = "Tetrahedron 10 NC"
+                edge_tags = edge_tags.reshape(-1, 6) - 1
+              case _:
+                raise ValueError(f"Element type {element_name} not supported for quadratic basis.")
+          case 3:
+            edge_nodes = gmsh.model.mesh.get_element_edge_nodes(element_type, tag)
+            edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+            all_edges, _ = gmsh.model.mesh.get_all_edges()
+            max_edge_tag = all_edges.max()
+            edge_tags = np.asarray(edge_tags, dtype=np.int64)
+            edge_tags = edge_tags - 1
+            sec_edge_tags = edge_tags + max_edge_tag + max_node_tag
+            edge_tags = edge_tags + max_node_tag
+            face_nodes = gmsh.model.mesh.get_element_face_nodes(element_type, 3, tag)
+            face_tags, _ = gmsh.model.mesh.get_faces(3, face_nodes)
+            face_tags = np.asarray(face_tags, dtype=np.int64)
+            face_tags = face_tags - 1 + max_edge_tag + max_edge_tag + max_node_tag
+            match element_name:
+              case "Line 2":
+                element_name = "Line 4 NC"
+                edge_tags = edge_tags[:, None]
+                sec_edge_tags = sec_edge_tags[:, None]
+              case "Triangle 3":
+                element_name = "Triangle 10 NC"
+                face_tags = face_tags[:, None]
+                edge_tags = edge_tags.reshape(-1, 3)
+                sec_edge_tags = sec_edge_tags.reshape(-1, 3)
+              case "Tetrahedron 4":
+                element_name = "Tetrahedron 20 NC"
+                face_tags = face_tags.reshape(-1, 4)
+                edge_tags = edge_tags.reshape(-1, 6)
+                sec_edge_tags = sec_edge_tags.reshape(-1, 6)
+              case _:
+                raise ValueError(f"Element type {element_name} not supported for cubic basis.")
         element_node_tags = np.asarray(element_node_tags, dtype=np.int64)
         nodes_tags = (element_node_tags - 1).reshape(-1, num_nodes)
         basis_tags = nodes_tags
-        # edge_tags = np.sort(edge_tags, axis=1)
-        if use_quadratic:
-          basis_tags = np.concatenate([nodes_tags, edge_tags + max_node_tag], axis=1)
-        quad_points, weights = gmsh.model.mesh.get_integration_points(element_type, "Gauss4")
+        # if use_quadratic:
+        #   basis_tags = np.concatenate([nodes_tags, edge_tags + max_node_tag], axis=1)
+        match basis_order:
+          case 2:
+            basis_tags = np.concatenate([nodes_tags, edge_tags + max_node_tag], axis=1)
+          case 3:
+            if element_name == "Line 4 NC":
+              basis_tags = np.concatenate([nodes_tags, edge_tags, sec_edge_tags], axis=1)
+            else:
+              basis_tags = np.concatenate([nodes_tags, edge_tags, sec_edge_tags, face_tags], axis=1)
+        quad_points, weights = gmsh.model.mesh.get_integration_points(element_type, "Gauss8")
+        # basis_tags = np.sort(basis_tags, axis=1)
         yield MeshBlock(element_name, nodes_tags, basis_tags, np.asarray(quad_points).reshape(-1, 3)[:, :dim], np.asarray(weights))
 
     def generate_domain(dim: int, tag: int, max_node_tag: int) -> MeshDomain:
@@ -309,19 +365,42 @@ class Mesh:
       vertices = coords.reshape(-1, 3)[np.argsort(tags), :dim]
       boundary_indices = np.unique(boundary_node_tags - 1)
 
-      if use_quadratic:
-        elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
-        edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
-        edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
-        edge_tags = np.asarray(edge_tags, dtype=np.int64)
-        edge_tags = np.unique(edge_tags)
-        boundary_indices = np.concatenate([boundary_indices, (edge_tags - 1) + max_node_tag])
+      # if use_quadratic:
+      #   elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+      #   edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
+      #   edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+      #   edge_tags = np.asarray(edge_tags, dtype=np.int64)
+      #   edge_tags = np.unique(edge_tags)
+      #   boundary_indices = np.concatenate([boundary_indices, (edge_tags - 1) + max_node_tag])
+
+      match basis_order:
+        case 2:
+          elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+          edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
+          edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+          edge_tags = np.asarray(edge_tags, dtype=np.int64)
+          edge_tags = np.unique(edge_tags)
+          boundary_indices = np.concatenate([boundary_indices, (edge_tags - 1) + max_node_tag])
+        case 3:
+          elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+          edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
+          edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
+          edge_tags = np.asarray(edge_tags, dtype=np.int64)
+          edge_tags = np.unique(edge_tags) - 1
+          sec_edge_tags = edge_tags + edge_tags.max() + 1 + max_node_tag
+          edge_tags = edge_tags + max_node_tag
+          face_nodes = gmsh.model.mesh.get_element_face_nodes(elem_type[0], 3, -1)
+          face_tags, _ = gmsh.model.mesh.get_faces(3, face_nodes)
+          face_tags = np.asarray(face_tags, dtype=np.int64)
+          face_tags = np.unique(face_tags)
+          face_tags = face_tags + sec_edge_tags.max() - 1
+          boundary_indices = np.concatenate([boundary_indices, edge_tags, sec_edge_tags, face_tags])
 
       elements = list(generate_block(dim, tag, max_node_tag))
       boundaries = []
       # NOTE: it's not work for circle splitted mesh
-      # for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
-      for bdim, btag in gmsh.model.get_physical_groups(dim - 1):
+      for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
+        # for bdim, btag in gmsh.model.get_physical_groups(dim - 1):
         blocks = list(generate_block(bdim, abs(btag), max_node_tag))
         assert len(blocks) > 0, (dim, tag)
         boundaries.append(MeshBoundary(get_material(bdim, abs(btag)), btag, blocks))
@@ -344,8 +423,15 @@ class Mesh:
         gmsh.model.mesh.refine()
       gmsh.model.mesh.partition(num_part)
 
-      if use_quadratic:
-        gmsh.model.mesh.create_edges()
+      # if use_quadratic:
+      #   gmsh.model.mesh.create_edges()
+
+      match basis_order:
+        case 2:
+          gmsh.model.mesh.create_edges()
+        case 3:
+          gmsh.model.mesh.create_edges()
+          gmsh.model.mesh.create_faces()
 
       node_tags, _, _ = gmsh.model.mesh.get_nodes(-1, -1, True, False)
       max_node_tag = node_tags.max()

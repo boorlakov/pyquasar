@@ -3,7 +3,17 @@ from typing import Optional, Callable
 import numpy as np
 from scipy import sparse
 
-from .fem import FemLine2, FemTriangle3, FemTetrahedron4, FemLine3NC, FemTriangle6NC, FemTetrahedron10NC
+from .fem import (
+  FemLine2,
+  FemTriangle3,
+  FemTetrahedron4,
+  FemLine3NC,
+  FemTriangle6NC,
+  FemTetrahedron10NC,
+  FemLine4NC,
+  FemTriangle10NC,
+  FemTetrahedron20NC,
+)
 from .mesh import MeshDomain, MeshBlock, MeshBoundary
 import numpy.typing as npt
 
@@ -182,6 +192,12 @@ class FemDomain:
         return FemTriangle6NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case "Tetrahedron 10 NC":
         return FemTetrahedron10NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Line 4 NC":
+        return FemLine4NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Triangle 10 NC":
+        return FemTriangle10NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Tetrahedron 20 NC":
+        return FemTetrahedron20NC(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case _:
         raise ValueError(f"Unsupported element type {block.type}")
 
