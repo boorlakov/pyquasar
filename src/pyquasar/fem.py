@@ -2,7 +2,7 @@ from typing import Callable
 import numpy as np
 from scipy import sparse
 import numpy.typing as npt
-
+import cupy
 
 class FemBase:
   """A base class for Finite Element Method."""
@@ -202,8 +202,6 @@ class FemBase3D(FemBase):
     self._dir1 = elements_verts[:, 1] - self.center
     self._dir2 = elements_verts[:, 2] - self.center
     self._dir3 = elements_verts[:, 3] - self.center
-    self._dir4 = elements_verts[:, 2] - elements_verts[:, 1]
-    self._dir5 = elements_verts[:, 3] - elements_verts[:, 1]
     normal = np.cross(self.dir1, self.dir2).reshape(self.center.shape[0], -1)
     self._J = np.sum(normal * self.dir3, axis=-1)[:, None]
     self._contradir = [
@@ -232,16 +230,6 @@ class FemBase3D(FemBase):
   def dir3(self) -> npt.NDArray[np.floating]:
     """The third direction of the element vertices."""
     return self._dir3
-
-  @property
-  def dir4(self) -> npt.NDArray[np.floating]:
-    """The fourth direction of the element vertices."""
-    return self._dir4
-
-  @property
-  def dir5(self) -> npt.NDArray[np.floating]:
-    """The fifth direction of the element vertices."""
-    return self._dir5
 
   @property
   def J(self) -> npt.NDArray[np.floating]:
@@ -1069,6 +1057,8 @@ class FemTetrahedron4(FemBase3D):
     weights: npt.NDArray[np.floating],
   ):
     super().__init__(elements_verts, elements, quad_points, weights)
+    self.center_cuda = cupy.asarray(self.center)
+    self.contradir_cuda = cupy.asarray(self.contradir)
     self._psi = np.array(
       [
         1 - self.quad_points[:, 0] - self.quad_points[:, 1] - self.quad_points[:, 2],
@@ -1180,16 +1170,16 @@ class FemTetrahedron4(FemBase3D):
   def project_grad_into(
     self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
   ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
-    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
-    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    vec = points[:, None, :] - self.center_cuda[None, :, :]  # shape: N_p, N_e, 3
+    master_points = cupy.einsum("ped,ned->epn", vec, self.contradir_cuda, optimize="greedy")  # shape: N_e, N_p, 3
     eps = 1e-15
-    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
-    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids, points_ids = cupy.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= cupy.float64(1 + eps)))
+    points_ids, elements = cupy.unique(points_ids, return_index=True)
     elements_ids = elements_ids[elements]
 
-    ones = np.ones_like(points_ids)
-    zeros = np.zeros_like(points_ids)
-    grad = np.array(
+    ones = cupy.ones_like(points_ids)
+    zeros = cupy.zeros_like(points_ids)
+    grad = cupy.array(
       [
         [
           -ones,
@@ -1211,6 +1201,9 @@ class FemTetrahedron4(FemBase3D):
         ],
       ]
     )
+    grad = cupy.asnumpy(grad)
+    elements_ids = cupy.asnumpy(elements_ids)
+    points_ids = cupy.asnumpy(points_ids)
     grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
     i = np.repeat(points_ids, 4)
     j = self.elements[elements_ids].ravel()
@@ -1230,6 +1223,8 @@ class FemTetrahedron10NC(FemBase3D):
     weights: npt.NDArray[np.floating],
   ):
     super().__init__(elements_verts, elements, quad_points, weights)
+    self.contradir_cuda = cupy.asarray(self.contradir)
+    self.center_cuda = cupy.asarray(self.center)
     L_coords = np.array(
       [
         1 - self.quad_points[:, 0] - self.quad_points[:, 1] - self.quad_points[:, 2],
@@ -1407,15 +1402,16 @@ class FemTetrahedron10NC(FemBase3D):
   def project_grad_into(
     self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
   ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
-    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
-    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    vec = points[:, None, :] - self.center_cuda[None, :, :]  # shape: N_p, N_e, 3
+
+    master_points = cupy.einsum("ped,ned->epn", vec, self.contradir_cuda, optimize="greedy")  # shape: N_e, N_p, 3
     eps = 1e-15
-    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
-    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids, points_ids = cupy.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= cupy.float64(1 + eps)))
+    points_ids, elements = cupy.unique(points_ids, return_index=True)
     elements_ids = elements_ids[elements]
     master_points = master_points[elements_ids, points_ids]
 
-    L_values = np.array(
+    L_values = cupy.array(
       [
         1 - master_points[:, 0] - master_points[:, 1] - master_points[:, 2],
         master_points[:, 0],
@@ -1423,47 +1419,49 @@ class FemTetrahedron10NC(FemBase3D):
         master_points[:, 2],
       ]
     )
-    grad = np.array(
+    grad = cupy.array(
       [
         [
           -4 * L_values[0] + 1,
           4 * L_values[1] - 1,
-          np.zeros_like(L_values[0]),
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           4 * (L_values[0] - L_values[1]),
           4 * L_values[2],
           -4 * L_values[2],
           -4 * L_values[3],
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           4 * L_values[3],
         ],
         [
           -4 * L_values[0] + 1,
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           4 * L_values[2] - 1,
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           -4 * L_values[1],
           4 * L_values[1],
           4 * (L_values[0] - L_values[2]),
           -4 * L_values[3],
           4 * L_values[3],
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
         ],
         [
           -4 * L_values[0] + 1,
-          np.zeros_like(L_values[0]),
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           4 * L_values[3] - 1,
           -4 * L_values[1],
-          np.zeros_like(L_values[0]),
+          cupy.zeros_like(L_values[0]),
           -4 * L_values[2],
           4 * (L_values[0] - L_values[3]),
           4 * L_values[2],
           4 * L_values[1],
         ],
       ],
-      dtype=self.psi.dtype,
     )
+    elements_ids = cupy.asnumpy(elements_ids)
+    grad = cupy.asnumpy(grad)
+    points_ids = cupy.asnumpy(points_ids)
     grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
     i = np.repeat(points_ids, 10)
     j = self.elements[elements_ids].ravel()

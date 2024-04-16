@@ -399,8 +399,8 @@ class Mesh:
       elements = list(generate_block(dim, tag, max_node_tag))
       boundaries = []
       # NOTE: it's not work for circle splitted mesh
-      for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
-        # for bdim, btag in gmsh.model.get_physical_groups(dim - 1):
+      # for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
+      for bdim, btag in gmsh.model.get_physical_groups(dim - 1):
         blocks = list(generate_block(bdim, abs(btag), max_node_tag))
         assert len(blocks) > 0, (dim, tag)
         boundaries.append(MeshBoundary(get_material(bdim, abs(btag)), btag, blocks))
