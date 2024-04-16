@@ -85,12 +85,12 @@ class FemProblem:
     # NOTE: Because numeration of mesh is global, we can just take the first domain
     return self.domains[0].dof_count
 
-  def assembly(self, material: dict) -> None:
+  def assembly(self, material: dict, batch_size: int = None) -> None:
     size = self.dof_count
     self._matrix = sparse.coo_array((size, size)).tocsc()
     self._load_vector = np.zeros(size)
     for domain in self.domains:
-      domain.assembly(material.get(domain.material, {}))
+      domain.assembly(material.get(domain.material, {}), batch_size=batch_size)
       self._matrix += domain.stiffness_matrix + domain.mass_matrix
       self._load_vector += domain.load_vector
 
@@ -102,7 +102,9 @@ class FemProblem:
     proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
     if batch_size is None:
       batch_size = points.shape[0]
-    num_batches = points.shape[0] // batch_size + 1
+    num_batches = points.shape[0] // batch_size
+    if points.shape[0] % batch_size != 0:
+      num_batches += 1
     proj_matrix_list = []
     for domain in self.domains:
       if batch_size is not None:
@@ -131,7 +133,8 @@ class FemProblem:
       for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
         for element in boundary.elements:
           fe = domain.fabric(element)
-          mass_boundary += np.sign(boundary.tag) * fe.mass_matrix(shape)
+          for batched_fe in fe:
+            mass_boundary += np.sign(boundary.tag) * batched_fe.mass_matrix(shape)
     return mass_boundary @ compress_matrix
 
   def project_grad_into(
@@ -144,7 +147,9 @@ class FemProblem:
     )
     if batch_size is None:
       batch_size = points.shape[0]
-    num_batches = points.shape[0] // batch_size + 1
+    num_batches = points.shape[0] // batch_size
+    if points.shape[0] % batch_size != 0:
+      num_batches += 1
     proj_x_list, proj_y_list, proj_z_list = [], [], []
     for domain in self.domains:
       if batch_size is not None:

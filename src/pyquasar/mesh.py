@@ -346,14 +346,14 @@ class Mesh:
       boundary_indices = np.unique(boundary_node_tags - 1)
       match basis_order:
         case 2:
-          elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+          elem_type, _, _ = gmsh.model.mesh.get_elements(gmsh.model.get_dimension() - 1, -1)
           edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
           edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
           edge_tags = np.asarray(edge_tags, dtype=np.int64)
           edge_tags = np.unique(edge_tags)
           boundary_indices = np.concatenate([boundary_indices, (edge_tags - 1) + max_node_tag])
         case 3:
-          elem_type, _, _ = gmsh.model.mesh.get_elements(dim, tag)
+          elem_type, _, _ = gmsh.model.mesh.get_elements(gmsh.model.get_dimension() - 1, -1)
           edge_nodes = gmsh.model.mesh.get_element_edge_nodes(elem_type[0], -1)
           edge_tags, _ = gmsh.model.mesh.get_edges(edge_nodes)
           edge_tags = np.asarray(edge_tags, dtype=np.int64)
