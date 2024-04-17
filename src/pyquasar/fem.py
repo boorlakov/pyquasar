@@ -1407,7 +1407,8 @@ class FemTetrahedron10NC(FemBase3D):
 
     master_points = cupy.einsum("ped,ned->epn", vec, self.contradir_cuda, optimize="greedy")  # shape: N_e, N_p, 3
     eps = 1e-15
-    elements_ids, points_ids = cupy.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= cupy.float64(1 + eps)))
+    test = (master_points[:, :, 0] >= -eps) & (master_points[:, :, 1] >= -eps) & (master_points[:, :, 2] >= -eps)
+    elements_ids, points_ids = cupy.nonzero((test & (master_points.sum(axis=-1) <= cupy.float64(1 + eps))))
     points_ids, elements = cupy.unique(points_ids, return_index=True)
     elements_ids = elements_ids[elements]
     master_points = master_points[elements_ids, points_ids]
