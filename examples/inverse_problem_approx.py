@@ -46,7 +46,7 @@ sp.sparse.linalg.use_solver(useUmfpack=False)
 
 mesh = pq.Mesh.load(mesh_path, basis_order=basis_order, refine_k=refine_k)
 
-mesh.domains[0].vertices[..., 2] = mesh.domains[0].vertices[..., 2] + 1.6
+# mesh.domains[0].vertices[..., 2] = mesh.domains[0].vertices[..., 2] + 1.6
 
 materials = {
   "air": {"air": 0},
