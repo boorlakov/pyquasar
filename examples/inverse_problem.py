@@ -128,9 +128,9 @@ for i in tqdm(range(num_batches), "Assembling inverse matrix"):
   M_cp[:, i * batch_size : (i + 1) * batch_size] = cp.concatenate([proj_grad_cp[0] @ sol, proj_grad_cp[1] @ sol, proj_grad_cp[2] @ sol])
 
 mesh_name = f"{mesh_path.split('.')[0]}_b_{basis_order}_k_{refine_k}"
-data["mesh"] = [mesh_name, mesh_name, mesh_name]
+data["mesh"] = [mesh_name]
 
-for iter_n in [100, 1000, 10000]:
+for iter_n in [100000]:
   print(f"Starting with {iter_n} maxiters")
   res_flow_cp, istop, itn, normr, normar = cpsl.lsmr(M_cp, grad_cp, atol=1e-15, btol=1e-15, maxiter=iter_n)[:5]
 
