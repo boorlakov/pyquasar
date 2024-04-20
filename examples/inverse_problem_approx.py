@@ -19,6 +19,7 @@ parser.add_argument("-m", "--mesh_path", type=str, help="Path to the mesh data")
 parser.add_argument("-b", "--basis_order", type=int, default=1, help="Order of the basis")
 parser.add_argument("-k", "--refine_k", type=int, default=0, help="Refine parameter")
 parser.add_argument("-bs", "--grad_batch_size", type=int, default=256, help="Batch size for gradient")
+parser.add_argument("-o", "--output", type=str)
 args = parser.parse_args()
 
 test_datapath = args.test_datapath
@@ -148,9 +149,9 @@ for i in tqdm(range(num_batches), "Assembling inverse matrix"):
   M_cp[:, i * batch_size : (i + 1) * batch_size] = cp.concatenate([proj_grad_cp[0] @ sol, proj_grad_cp[1] @ sol, proj_grad_cp[2] @ sol])
 
 mesh_name = f"{mesh_path.split('.')[0]}_b_{basis_order}_k_{refine_k}"
-data["mesh"] = [mesh_name]
+data["mesh"] = [mesh_name, mesh_name, mesh_name]
 
-for iter_n in [100000]:
+for iter_n in [100, 1000, 10000]:
   print(f"Starting with {iter_n} maxiters")
   res_flow_cp, istop, itn, normr, normar = cpsl.lsmr(M_cp, grad_cp, atol=1e-15, btol=1e-15, maxiter=iter_n)[:5]
 
@@ -186,8 +187,9 @@ for iter_n in [100000]:
 
   surface_max_err = np.abs(np.concatenate([surface_diff_x, surface_diff_y, surface_diff_z])).max()
 
-  surface_std_err = np.sqrt((surface_diff_x**2 + surface_diff_y**2 + surface_diff_z**2) / (surface_diff_x.shape[0])).max()
+  # surface_std_err = np.sqrt((surface_diff_x**2 + surface_diff_y**2 + surface_diff_z**2) / (surface_diff_x.shape[0])).max()
 
+  surface_std_err = np.sqrt(np.mean(surface_diff_x**2 + surface_diff_y**2 + surface_diff_z**2))
   test_grad_x = test_proj_grad[0] @ test_sol
   test_grad_y = test_proj_grad[1] @ test_sol
   test_grad_z = test_proj_grad[2] @ test_sol
@@ -198,8 +200,9 @@ for iter_n in [100000]:
 
   max_err = np.abs(np.concatenate([diff_x, diff_y, diff_z])).max()
 
-  std_err = np.sqrt((diff_x**2 + diff_y**2 + diff_z**2) / (diff_x.shape[0])).max()
+  # std_err = np.sqrt((diff_x**2 + diff_y**2 + diff_z**2) / (diff_x.shape[0])).max()
 
+  std_err = np.sqrt(np.mean(diff_x**2 + diff_y**2 + diff_z**2))
   data["iters"].append(itn)
   data["residual"].append(normar)
   data["surface_max_err"].append(surface_max_err)
@@ -209,3 +212,4 @@ for iter_n in [100000]:
 
 data_df = pd.DataFrame(data)
 print(data_df)
+data_df.to_csv(f"report/{args.output}.csv", mode="a", header=False, index=False)
