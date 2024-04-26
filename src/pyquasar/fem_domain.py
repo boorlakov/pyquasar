@@ -1,11 +1,15 @@
 from typing import Optional, Callable
+import numpy.typing as npt
 
 import numpy as np
 from scipy import sparse
 
-from .fem import FemLine2, FemTriangle3, FemTetrahedron4
-from .mesh import MeshDomain, MeshBlock
-import numpy.typing as npt
+from .fem import (
+  FemLine2,
+  FemTriangle3,
+  FemTetrahedron4,
+)
+from .mesh import MeshDomain, MeshBlock, MeshBoundary
 
 
 class FemDomain:
@@ -41,14 +45,14 @@ class FemDomain:
     return self._mesh.elements
 
   @property
-  def boundaries(self) -> list[MeshBlock]:
+  def boundaries(self) -> list[MeshBoundary]:
     """Boundary elements of the FEM domain."""
     return self._mesh.boundaries
 
   @property
   def dof_count(self) -> int:
     """Number of degrees of freedom."""
-    return self._mesh.vertices.shape[0]
+    return self._mesh.dof_count
 
   @property
   def ext_dof_count(self) -> int:
@@ -65,6 +69,14 @@ class FemDomain:
     """Global stiffness matrix of the FEM domain."""
     if hasattr(self, "_stiffness_matrix"):
       return self._stiffness_matrix
+    else:
+      raise AttributeError("Domain is not assembled yet.")
+
+  @property
+  def mass_matrix(self) -> sparse.csc_matrix:
+    """Global mass matrix of the FEM domain."""
+    if hasattr(self, "_mass_matrix"):
+      return self._mass_matrix
     else:
       raise AttributeError("Domain is not assembled yet.")
 
@@ -127,7 +139,7 @@ class FemDomain:
   def __repr__(self) -> str:
     PAD = "\n\t"
     repr_str = f"<FemDomain object summary{PAD}DOF: {self.dof_count}{PAD}External DOF: {self.ext_dof_count}"
-    if self.stiffness_matrix is not None:
+    if hasattr(self, "_stiffness_matrix"):
       assembled = True
     else:
       assembled = False
@@ -140,7 +152,7 @@ class FemDomain:
     repr_str += f"{PAD}Mesh domain: {repr(self._mesh)}>"
     return repr_str
 
-  def fabric(self, block: MeshBlock, ext: bool = False):
+  def fabric(self, block: MeshBlock, ext: bool = False, batch_size: int = None):
     """Return the corresponding FEM element.
 
     Parameters
@@ -160,16 +172,29 @@ class FemDomain:
     ValueError
       If the element type is not supported.
     """
-    indices = self.boundary_indices[block.node_tags] if ext else block.node_tags
-    match block.type:
-      case "Line 2":
-        return FemLine2(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
-      case "Triangle 3":
-        return FemTriangle3(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
-      case "Tetrahedron 4":
-        return FemTetrahedron4(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
-      case _:
-        raise ValueError(f"Unsupported element type {block.type}")
+    if batch_size is None:
+      num_batches = 1
+      batch_size = block.basis_tags.shape[0]
+    else:
+      num_batches = block.basis_tags.shape[0] // batch_size
+      if block.basis_tags.shape[0] % batch_size != 0:
+        num_batches += 1
+    for i in range(num_batches):
+      indices = (
+        self.boundary_indices[block.basis_tags[i * batch_size : (i + 1) * batch_size]]
+        if ext
+        else block.basis_tags[i * batch_size : (i + 1) * batch_size]
+      )
+      verts = self.vertices[block.node_tags[i * batch_size : (i + 1) * batch_size]]
+      match block.type:
+        case "Line 2":
+          yield FemLine2(verts, indices, block.quad_points, block.weights)
+        case "Triangle 3":
+          yield FemTriangle3(verts, indices, block.quad_points, block.weights)
+        case "Tetrahedron 4":
+          yield FemTetrahedron4(verts, indices, block.quad_points, block.weights)
+        case _:
+          raise ValueError(f"Unsupported element type {block.type}")
 
   def assembly(
     self,
@@ -177,6 +202,7 @@ class FemDomain:
       Optional[str],
       Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     ],
+    batch_size: int = None,
   ) -> None:
     """Assemble the FEM domain. Stores the stiffness matrix in CSC format.
 
@@ -192,25 +218,34 @@ class FemDomain:
     """
     self._load_vector = np.zeros(self.dof_count)
     self._corr_vector = np.zeros_like(self.load_vector)
+
     self._kernel = np.ones((1, self.load_vector.size))  # only for Lagrange basis
+
     lambda_ = material_dict.get("lambda", 1)
+    gamma = material_dict.get("gamma", None)
 
     for boundary in self.boundaries:
       if f := material_dict.get(boundary.type):
-        for fe in map(self.fabric, boundary.elements):
-          self._load_vector += np.sign(boundary.tag) * fe.load_vector(f, self.load_vector.shape)
+        for fe in (self.fabric(boundary_element, batch_size=batch_size) for boundary_element in boundary.elements):
+          for batchde_fe in fe:
+            self._load_vector += np.sign(boundary.tag) * batchde_fe.load_vector(f, self.load_vector.shape)
 
     diameters = []
     self._scaling = np.full(self.ext_dof_count, lambda_)
     self._stiffness_matrix = sparse.coo_array((self.dof_count, self.dof_count))
-    for fe in map(self.fabric, self.elements):
-      self._stiffness_matrix += lambda_ * fe.stiffness_matrix(self._stiffness_matrix.shape)
-      self._corr_vector += fe.load_vector(1, self.corr_vector.shape)
-      diameters.append(fe.diameter())
-      if f := material_dict.get(self.material):
-        self._load_vector += fe.load_vector(f, self.load_vector.shape)
+    self._mass_matrix = sparse.coo_array((self.dof_count, self.dof_count))
+    for fe in (self.fabric(element, batch_size=batch_size) for element in self.elements):
+      for batched_fe in fe:
+        self._stiffness_matrix += lambda_ * batched_fe.stiffness_matrix(self.stiffness_matrix.shape)
+        if gamma:
+          self._mass_matrix += gamma * batched_fe.mass_matrix(self.mass_matrix.shape)
+        self._corr_vector += batched_fe.load_vector(1, self.corr_vector.shape)
+        diameters.append(batched_fe.diameter())
+        if f := material_dict.get(self.material):
+          self._load_vector += batched_fe.load_vector(f, self.load_vector.shape)
     self._diameter = ((sum_d := sum(D for D, _ in diameters)), sum(d * D for D, d in diameters) / sum_d)
     self._stiffness_matrix = self._stiffness_matrix.tocsc()
+    self._mass_matrix = self._mass_matrix.tocsc()
 
   def decompose(self) -> None:
     """Compute the factorization of the global matrix."""
@@ -267,3 +302,24 @@ class FemDomain:
 
   def calc_solution(self, sol: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
     return sol
+
+  def tabulate(self, points: npt.NDArray[np.floating]) -> sparse.coo_matrix:
+    proj_matrix = sparse.coo_array((points.shape[0], self.dof_count))
+    for fe in map(self.fabric, self.elements):
+      for batched_fe in fe:
+        proj_matrix += batched_fe.tabulate(points, (points.shape[0], self.dof_count))
+    return proj_matrix
+
+  def tabulate_grad(self, points: npt.NDArray[np.floating]) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
+    proj_x, prog_y, proj_z = (
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+      sparse.coo_array((points.shape[0], self.dof_count)),
+    )
+    for fe in map(self.fabric, self.elements):
+      for batched_fe in fe:
+        proj_grad = batched_fe.tabulate_grad(points, (points.shape[0], self.dof_count))
+        proj_x += proj_grad[0]
+        prog_y += proj_grad[1]
+        proj_z += proj_grad[2]
+    return proj_x, prog_y, proj_z

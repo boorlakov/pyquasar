@@ -13,11 +13,13 @@ class MeshBlock:
     self,
     type: str,
     node_tags: npt.NDArray[np.signedinteger],
+    basis_tags: npt.NDArray[np.signedinteger],
     quad_points: npt.NDArray[np.floating],
     weights: npt.NDArray[np.floating],
   ) -> None:
     self._type = type
     self._node_tags = node_tags
+    self._basis_tags = basis_tags
     self._quad_points = quad_points
     self._weights = weights
 
@@ -30,6 +32,11 @@ class MeshBlock:
   def node_tags(self) -> npt.NDArray[np.signedinteger]:
     """The node tags of the block."""
     return self._node_tags
+
+  @property
+  def basis_tags(self) -> npt.NDArray[np.signedinteger]:
+    """The basis tags of the block."""
+    return self._basis_tags
 
   @property
   def quad_points(self) -> npt.NDArray[np.floating]:
@@ -98,6 +105,7 @@ class MeshDomain:
     self._boundaries = boundaries
     self._boundary_indices = boundary_indices
     self._elements_count = sum(len(element.node_tags) for element in self.elements)
+    self._dof_count = sum(len(np.unique(element.basis_tags)) for element in self.elements)
 
   @property
   def material(self) -> str:
@@ -144,6 +152,10 @@ class MeshDomain:
     """The number of elements in the domain."""
     return self._elements_count
 
+  @property
+  def dof_count(self) -> int:
+    return self._dof_count
+
   def __repr__(self) -> str:
     PAD = "\n\t"
     return (
@@ -170,6 +182,7 @@ class MeshDomain:
     return result.getvalue()
 
   def _localize_numeration(self, is_interface: npt.NDArray[np.bool_], global_indices: npt.NDArray[np.int64]) -> None:
+    # TODO: This will work only for linear case
     domain_tags = []
     for element in self.elements:
       domain_tags.append(element.node_tags.flatten())
@@ -185,9 +198,11 @@ class MeshDomain:
     self._boundary_indices = local_boundary_indices
     for block in self.elements:
       block._node_tags = inv_indices[block.node_tags]
+      block._basis_tags = inv_indices[block.node_tags].copy()
     for boundary in self.boundaries:
       for block in boundary.elements:
         block._node_tags = inv_indices[block.node_tags]
+        block._basis_tags = inv_indices[block.node_tags].copy()
 
 
 class Mesh:
@@ -257,7 +272,7 @@ class Mesh:
         element_node_tags = np.asarray(element_node_tags, dtype=np.int64)
         nodes_tags = (element_node_tags - 1).reshape(-1, num_nodes)
         quad_points, weights = gmsh.model.mesh.get_integration_points(element_type, "Gauss4")
-        yield MeshBlock(element_name, nodes_tags, np.asarray(quad_points).reshape(-1, 3)[:, :dim], np.asarray(weights))
+        yield MeshBlock(element_name, nodes_tags, nodes_tags.copy(), np.asarray(quad_points).reshape(-1, 3)[:, :dim], np.asarray(weights))
 
     def generate_domain(dim: int, tag: int) -> MeshDomain:
       material = get_material(dim, tag)

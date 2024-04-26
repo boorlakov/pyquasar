@@ -24,6 +24,7 @@ class BemDomain:
     self._boundary_block = MeshBlock(
       self.boundaries[0].elements[0].type,
       np.concatenate(bem_elements),
+      np.concatenate(bem_elements),
       self.boundaries[0].elements[0].quad_points,
       self.boundaries[0].elements[0].weights,
     )

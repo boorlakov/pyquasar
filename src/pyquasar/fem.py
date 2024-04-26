@@ -557,3 +557,71 @@ class FemTetrahedron4(FemBase3D):
     else:
       f = np.asarray(func, dtype=np.float64)
     return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+
+  def tabulate(self, points: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
+    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
+    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    eps = 1e-15
+    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
+    master_points = master_points[elements_ids, points_ids]
+
+    basis_values = np.array(
+      [
+        1 - master_points[:, 0] - master_points[:, 1] - master_points[:, 2],
+        master_points[:, 0],
+        master_points[:, 1],
+        master_points[:, 2],
+      ]
+    ).T
+    i = np.repeat(points_ids, 4)
+    j = self.elements[elements_ids].ravel()
+    data = basis_values.ravel()
+    return sparse.coo_array((data, (i, j)), shape=shape)
+
+  def tabulate_grad(
+    self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
+  ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
+    vec = points[:, None, :] - self.center_cuda[None, :, :]  # shape: N_p, N_e, 3
+    master_points = np.einsum("ped,ned->epn", vec, self.contradir_cuda, optimize="greedy")  # shape: N_e, N_p, 3
+    eps = 1e-15
+    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
+    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids = elements_ids[elements]
+
+    ones = np.ones_like(points_ids)
+    zeros = np.zeros_like(points_ids)
+    grad = np.array(
+      [
+        [
+          -ones,
+          ones,
+          zeros,
+          zeros,
+        ],
+        [
+          -ones,
+          zeros,
+          ones,
+          zeros,
+        ],
+        [
+          -ones,
+          zeros,
+          zeros,
+          ones,
+        ],
+      ]
+    )
+    grad = np.asnumpy(grad)
+    elements_ids = np.asnumpy(elements_ids)
+    points_ids = np.asnumpy(points_ids)
+    grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
+    i = np.repeat(points_ids, 4)
+    j = self.elements[elements_ids].ravel()
+    return (
+      sparse.coo_array((grad_cart[0].ravel(), (i, j)), shape=shape),
+      sparse.coo_array((grad_cart[1].ravel(), (i, j)), shape=shape),
+      sparse.coo_array((grad_cart[2].ravel(), (i, j)), shape=shape),
+    )

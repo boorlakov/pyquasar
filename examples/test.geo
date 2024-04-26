@@ -15,4 +15,4 @@ Curve Loop(1) = {3, 4, 5, 1, 2};
 Plane Surface(1) = {1};
 
 Physical Surface("steel", 6) = {1};
-Physical Curve("dirichlet", 7) = {4, 5, 1, 2, 3};
+Physical Curve("neumann", 7) = {4, 5, 1, 2, 3};
