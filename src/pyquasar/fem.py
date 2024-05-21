@@ -49,7 +49,7 @@ class FemBase:
     np.negative(res[..., 0], out=res[..., 0])
     return res
 
-  def vector(self, data: npt.NDArray[np.floating], shape: tuple[int, ...]) -> npt.NDArray[np.floating]:
+  def vector(self, data: npt.NDArray[np.floating], shape: tuple[int, ...], dtype) -> npt.NDArray[np.floating]:
     """Transform local vectors to global vector.
 
     Parameters
@@ -64,11 +64,11 @@ class FemBase:
     NDArray[float]
       The global vector.
     """
-    res = np.zeros(shape)
+    res = np.zeros(shape, dtype=dtype)
     np.add.at(res, self.elements, data)
     return res
 
-  def matrix(self, data: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
+  def matrix(self, data: npt.NDArray[np.floating], shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Construct a sparse COO matrix from the local matrices and given shape.
 
     Parameters
@@ -85,7 +85,7 @@ class FemBase:
     """
     i = np.broadcast_to(self.elements[:, None, :], data.shape)
     j = np.broadcast_to(self.elements[:, :, None], data.shape)
-    return sparse.coo_array((data.flat, (i.flat, j.flat)), shape)
+    return sparse.coo_array((data.flat, (i.flat, j.flat)), shape, dtype=dtype)
 
 
 class FemBase1D(FemBase):
@@ -275,7 +275,7 @@ class FemLine2(FemBase1D):
     """The gradient of the basis functions of the finite element line."""
     return self._psi_grad
 
-  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+  def mass_matrix(self, shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Compute the mass matrix for the finite element line.
 
     Parameters
@@ -287,9 +287,9 @@ class FemLine2(FemBase1D):
     -------
     coo_array
     """
-    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape, dtype)
 
-  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+  def stiffness_matrix(self, shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Compute the stiffness matrix for the finite element line.
 
     Parameters
@@ -301,9 +301,9 @@ class FemLine2(FemBase1D):
     -------
     coo_array
     """
-    return self.matrix((self.psi_grad[None, :] * self.psi_grad[:, None]) / self.J[..., None], shape)
+    return self.matrix((self.psi_grad[None, :] * self.psi_grad[:, None]) / self.J[..., None], shape, dtype)
 
-  def skew_grad_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+  def skew_grad_matrix(self, shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Compute the skew gradient matrix for the finite element line.
 
     Parameters
@@ -315,12 +315,13 @@ class FemLine2(FemBase1D):
     -------
     coo_array
     """
-    return self.matrix(np.ones_like(self.J[..., None]) * ((self.psi[None, :] * self.psi_grad[:, None]) @ self.weights), shape)
+    return self.matrix(np.ones_like(self.J[..., None]) * ((self.psi[None, :] * self.psi_grad[:, None]) @ self.weights), shape, dtype)
 
   def load_vector(
     self,
     func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     shape: tuple[int, ...],
+    dtype,
   ) -> npt.NDArray[np.floating]:
     """Compute the load vector for the finite element line.
 
@@ -339,12 +340,13 @@ class FemLine2(FemBase1D):
       f = func(self.center[:, None] + self.quad_points[None, :, 0, None] * self.dir[:, None], self.normal[:, None])
     else:
       f = np.asarray(func, dtype=np.float_)
-    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape, dtype)
 
   def load_grad_vector(
     self,
     func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     shape: tuple[int, ...],
+    dtype,
   ) -> npt.NDArray[np.floating]:
     """Compute the load gradient vector for the finite element line.
 
@@ -366,6 +368,7 @@ class FemLine2(FemBase1D):
     return self.vector(
       (self.psi_grad * np.sum(np.sum(self.dir[:, None] * np.atleast_1d(f), axis=-1) * self.weights, axis=-1)[:, None]) / self.J,
       shape,
+      dtype,
     )
 
 
@@ -404,7 +407,7 @@ class FemTriangle3(FemBase2D):
     """The gradient of the basis functions of the finite element triangle."""
     return self._psi_grad
 
-  def mass_matrix(self, shape: tuple[int, ...]) -> npt.NDArray[np.floating]:
+  def mass_matrix(self, shape: tuple[int, ...], dtype) -> npt.NDArray[np.floating]:
     """Compute the mass matrix for the finite element triangle.
 
     Parameters
@@ -416,9 +419,9 @@ class FemTriangle3(FemBase2D):
     -------
     coo_array
     """
-    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape, dtype)
 
-  def stiffness_matrix(self, shape: tuple[int, ...]) -> npt.NDArray[np.floating]:
+  def stiffness_matrix(self, shape: tuple[int, ...], dtype) -> npt.NDArray[np.floating]:
     """Compute the stiffness matrix for the finite element triangle.
 
     Parameters
@@ -437,6 +440,7 @@ class FemTriangle3(FemBase2D):
     self,
     func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     shape: tuple[int, ...],
+    dtype,
   ) -> npt.NDArray[np.floating]:
     """Compute the load vector for the finite element triangle.
 
@@ -460,7 +464,7 @@ class FemTriangle3(FemBase2D):
       f = func(point, self.normal[:, None])
     else:
       f = np.asarray(func, dtype=np.float_)
-    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape, dtype)
 
 
 class FemTetrahedron4(FemBase3D):
@@ -499,7 +503,7 @@ class FemTetrahedron4(FemBase3D):
     """The gradient of the basis functions of the finite element tetrahedron."""
     return self._psi_grad
 
-  def mass_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+  def mass_matrix(self, shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Compute the mass matrix for the finite element tetrahedron.
 
     Parameters
@@ -511,9 +515,9 @@ class FemTetrahedron4(FemBase3D):
     -------
     coo_array
     """
-    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape)
+    return self.matrix(self.J[..., None] * ((self.psi[None, :] * self.psi[:, None]) @ self.weights), shape, dtype)
 
-  def stiffness_matrix(self, shape: tuple[int, ...]) -> sparse.coo_array:
+  def stiffness_matrix(self, shape: tuple[int, ...], dtype) -> sparse.coo_array:
     """Compute the stiffness matrix for the finite element tetrahedron.
 
     Parameters
@@ -526,12 +530,13 @@ class FemTetrahedron4(FemBase3D):
     coo_array
     """
     S = (1 / 6) * self.psi_grad[:, None, :, None] * self.psi_grad[None, :, None, :]
-    return self.matrix(self.J[..., None] * np.sum(self.contrametric[:, :, None, None] * S[..., None], axis=(0, 1)).T, shape)
+    return self.matrix(self.J[..., None] * np.sum(self.contrametric[:, :, None, None] * S[..., None], axis=(0, 1)).T, shape, dtype)
 
   def load_vector(
     self,
     func: Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     shape: tuple[int, ...],
+    dtype,
   ) -> npt.NDArray[np.floating]:
     """Compute the load vector for the finite element tetrahedron.
 
@@ -556,7 +561,7 @@ class FemTetrahedron4(FemBase3D):
       f = func(point, 0)
     else:
       f = np.asarray(func, dtype=np.float64)
-    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape)
+    return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape, dtype)
 
   def tabulate(self, points: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
     vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3

@@ -203,6 +203,7 @@ class FemDomain:
       Callable[[npt.NDArray[np.floating], npt.NDArray[np.floating]], npt.NDArray[np.floating]] | npt.ArrayLike,
     ],
     batch_size: int = None,
+    dtype=np.float64,
   ) -> None:
     """Assemble the FEM domain. Stores the stiffness matrix in CSC format.
 
@@ -216,33 +217,39 @@ class FemDomain:
     ValueError
       If the element type is not supported.
     """
-    self._load_vector = np.zeros(self.dof_count)
-    self._corr_vector = np.zeros_like(self.load_vector)
+    self._load_vector = np.zeros(self.dof_count, dtype=dtype)
+    self._corr_vector = np.zeros_like(self.load_vector, dtype=dtype)
 
-    self._kernel = np.ones((1, self.load_vector.size))  # only for Lagrange basis
+    self._kernel = np.ones((1, self.load_vector.size), dtype=dtype)  # only for Lagrange basis
 
     lambda_ = material_dict.get("lambda", 1)
     gamma = material_dict.get("gamma", None)
 
+    self._mass_matrix = sparse.coo_array((self.dof_count, self.dof_count), dtype=dtype)
     for boundary in self.boundaries:
       if f := material_dict.get(boundary.type):
         for fe in (self.fabric(boundary_element, batch_size=batch_size) for boundary_element in boundary.elements):
-          for batchde_fe in fe:
-            self._load_vector += np.sign(boundary.tag) * batchde_fe.load_vector(f, self.load_vector.shape)
+          for batched_fe in fe:
+            func = f.get(boundary.type)
+            beta = f.get("beta", None)
+            if beta:
+              self._mass_matrix += beta * batched_fe.mass_matrix(self.mass_matrix.shape, dtype)
+              self._load_vector += beta * np.sign(boundary.tag) * batched_fe.load_vector(func, self.load_vector.shape, dtype)
+            else:
+              self._load_vector += np.sign(boundary.tag) * batched_fe.load_vector(func, self.load_vector.shape, dtype)
 
     diameters = []
     self._scaling = np.full(self.ext_dof_count, lambda_)
-    self._stiffness_matrix = sparse.coo_array((self.dof_count, self.dof_count))
-    self._mass_matrix = sparse.coo_array((self.dof_count, self.dof_count))
+    self._stiffness_matrix = sparse.coo_array((self.dof_count, self.dof_count), dtype=dtype)
     for fe in (self.fabric(element, batch_size=batch_size) for element in self.elements):
       for batched_fe in fe:
-        self._stiffness_matrix += lambda_ * batched_fe.stiffness_matrix(self.stiffness_matrix.shape)
+        self._stiffness_matrix += lambda_ * batched_fe.stiffness_matrix(self.stiffness_matrix.shape, dtype)
         if gamma:
-          self._mass_matrix += gamma * batched_fe.mass_matrix(self.mass_matrix.shape)
-        self._corr_vector += batched_fe.load_vector(1, self.corr_vector.shape)
+          self._mass_matrix += gamma * batched_fe.mass_matrix(self.mass_matrix.shape, dtype)
+        self._corr_vector += batched_fe.load_vector(1, self.corr_vector.shape, dtype)
         diameters.append(batched_fe.diameter())
         if f := material_dict.get(self.material):
-          self._load_vector += batched_fe.load_vector(f, self.load_vector.shape)
+          self._load_vector += batched_fe.load_vector(f, self.load_vector.shape, dtype)
     self._diameter = ((sum_d := sum(D for D, _ in diameters)), sum(d * D for D, d in diameters) / sum_d)
     self._stiffness_matrix = self._stiffness_matrix.tocsc()
     self._mass_matrix = self._mass_matrix.tocsc()

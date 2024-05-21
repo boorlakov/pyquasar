@@ -26,7 +26,7 @@ class FemProblem:
     """The dimension of the problem."""
     return self._dim
 
-  def add_skeleton_projection(self, func, material_filter):
+  def add_skeleton_projection(self, func, material_filter, batch_size: int = None, dtype=np.float64):
     """Add a skeleton projection to the finite element problem.
 
     Parameters
@@ -38,15 +38,16 @@ class FemProblem:
     """
 
     size = self.dof_count
-    proj_matrix = sparse.coo_matrix((size, size))
-    proj_vector = np.zeros(size)
+    proj_matrix = sparse.coo_matrix((size, size), dtype=dtype)
+    proj_vector = np.zeros(size, dtype=dtype)
 
     for domain in self.domains:
       for boundary in (boundary for boundary in domain.boundaries if boundary.type in material_filter):
         for element in boundary.elements:
-          fe = domain.fabric(element)
-          proj_matrix += fe.mass_matrix(proj_matrix.shape)
-          proj_vector += fe.load_vector(func, size)
+          fe = domain.fabric(element, batch_size=batch_size)
+          for batched_fe in fe:
+            proj_matrix += batched_fe.mass_matrix(proj_matrix.shape, dtype)
+            proj_vector += batched_fe.load_vector(func, size, dtype)
 
     proj_matrix = proj_matrix.tocsr()
     diag = proj_matrix.diagonal() + 1e-30
@@ -96,7 +97,7 @@ class FemProblem:
     # NOTE: Because numeration of mesh is global, we can just take the first domain
     return self.domains[0].dof_count
 
-  def assembly(self, material: dict, batch_size: int = None) -> None:
+  def assembly(self, material: dict, batch_size: int = None, dtype=np.float64) -> None:
     """Assembles the global matrix and load vector for the finite element problem.
 
     Parameters
@@ -113,10 +114,10 @@ class FemProblem:
     >>> problem.assembly(material, batch_size=1024)
     """
     size = self.dof_count
-    self._matrix = sparse.coo_array((size, size)).tocsc()
-    self._load_vector = np.zeros(size)
+    self._matrix = sparse.coo_array((size, size), dtype=dtype).tocsc()
+    self._load_vector = np.zeros(size, dtype=dtype)
     for domain in self.domains:
-      domain.assembly(material.get(domain.material, {}), batch_size=batch_size)
+      domain.assembly(material.get(domain.material, {}), batch_size=batch_size, dtype=dtype)
       self._matrix += domain.stiffness_matrix + domain.mass_matrix
       self._load_vector += domain.load_vector
 
@@ -161,7 +162,7 @@ class FemProblem:
     ----------
     material_filter : list
       A list of boundary types to include in the calculation.
-    
+
     Returns
     -------
     NDArray
