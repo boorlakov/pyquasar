@@ -3,7 +3,7 @@ from typing import Callable, Optional
 import numpy as np
 import numpy.typing as npt
 
-from .bem import BemLine2
+from .bem import BemLine2, BemTriangle3
 from .mesh import MeshDomain, MeshBlock
 
 
@@ -168,7 +168,7 @@ class BemDomain:
     else:
       raise AttributeError("Domain is not assembled yet.")
 
-  def fabric(self, block: MeshBlock, ext: bool = False) -> BemLine2:
+  def fabric(self, block: MeshBlock, ext: bool = False) -> BemLine2 | BemTriangle3:
     """Return the corresponding BEM element.
 
     Parameters
@@ -192,6 +192,8 @@ class BemDomain:
     match block.type:
       case "Line 2":
         return BemLine2(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
+      case "Triangle 3":
+        return BemTriangle3(self.vertices[block.node_tags], indices, block.quad_points, block.weights)
       case _:
         raise ValueError(f"Unsupported element type {block.type}")
 
