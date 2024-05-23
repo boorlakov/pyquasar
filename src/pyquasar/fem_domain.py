@@ -15,9 +15,28 @@ from .mesh import MeshDomain, MeshBlock, MeshBoundary
 class FemDomain:
   """Finite Element Method domain."""
 
-  def __init__(self, domain: MeshDomain):
+  def __init__(self, domain: MeshDomain, device: str = "cpu"):
     self._mesh = domain
+    self._device = device
+    self._cp = None
+    self._cpsl = None
+
+    if self.device == "cuda":
+      try:
+        import cupy as cp
+        import cupy.sparse.linalg as cpsl
+
+        self._cp = cp
+        self._cpsl = cpsl
+      except ImportError:
+        raise ImportError("CuPy is not installed. Please install CuPy to use CUDA.")
+
     self._element_count = sum(len(element.node_tags) for element in self.elements)
+
+  @property
+  def device(self) -> str:
+    """The device of the domain. Can be 'cpu' or 'cuda'. If CuPy is installed tabulation is computed on CUDA device."""
+    return self._device
 
   @property
   def material(self) -> str:
@@ -192,7 +211,7 @@ class FemDomain:
         case "Triangle 3":
           yield FemTriangle3(verts, indices, block.quad_points, block.weights)
         case "Tetrahedron 4":
-          yield FemTetrahedron4(verts, indices, block.quad_points, block.weights)
+          yield FemTetrahedron4(verts, indices, block.quad_points, block.weights, self.device)
         case _:
           raise ValueError(f"Unsupported element type {block.type}")
 

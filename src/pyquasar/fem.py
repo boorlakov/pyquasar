@@ -474,8 +474,27 @@ class FemTetrahedron4(FemBase3D):
     elements: npt.NDArray[np.signedinteger],
     quad_points: npt.NDArray[np.floating],
     weights: npt.NDArray[np.floating],
+    device: str = "cpu",
   ):
     super().__init__(elements_verts, elements, quad_points, weights)
+    self._cp = None
+    self._device = device
+    if self.device == "cuda":
+      try:
+        import cupy as cp
+
+        self._cp = cp
+      except ImportError:
+        raise ImportError("CuPy is not installed. Please install CuPy to use CUDA.")
+
+      self._center_device = self._cp.asarray(self.center)
+      self._contradir_device = self._cp.asarray(self.contradir)
+      self._array_api = self._cp
+    else:
+      self._center_device = self.center
+      self._contradir_device = self.contradir
+      self._array_api = np
+
     self._psi = np.array(
       [
         1 - self.quad_points[:, 0] - self.quad_points[:, 1] - self.quad_points[:, 2],
@@ -492,6 +511,11 @@ class FemTetrahedron4(FemBase3D):
       ],
       dtype=self.psi.dtype,
     )
+
+  @property
+  def device(self) -> str:
+    """The device of the element. Can be 'cpu' or 'cuda'. If CuPy is installed tabulation is computed on CUDA device."""
+    return self._device
 
   @property
   def psi(self) -> npt.NDArray[np.floating]:
@@ -564,13 +588,19 @@ class FemTetrahedron4(FemBase3D):
     return self.vector(self.J * ((self.psi * np.atleast_1d(f)[:, None]) @ self.weights), shape, dtype)
 
   def tabulate(self, points: npt.NDArray[np.floating], shape: tuple[int, ...]) -> sparse.coo_array:
-    vec = points[:, None, :] - self.center[None, :, :]  # shape: N_p, N_e, 3
-    master_points = np.einsum("ped,ned->epn", vec, self.contradir, optimize="greedy")  # shape: N_e, N_p, 3
+    vec = points[:, None, :] - self._center_device[None, :, :]  # shape: N_p, N_e, 3
+    master_points = self._array_api.einsum("ped,ned->epn", vec, self._contradir_device, optimize="greedy")  # shape: N_e, N_p, 3
     eps = 1e-15
-    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
-    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids, points_ids = self._array_api.nonzero(
+      (master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps))
+    )
+    points_ids, elements = self._array_api.unique(points_ids, return_index=True)
     elements_ids = elements_ids[elements]
     master_points = master_points[elements_ids, points_ids]
+    if self.device == "cuda":
+      master_points = self._cp.asnumpy(master_points)
+      elements_ids = self._cp.asnumpy(elements_ids)
+      points_ids = self._cp.asnumpy(points_ids)
 
     basis_values = np.array(
       [
@@ -588,12 +618,18 @@ class FemTetrahedron4(FemBase3D):
   def tabulate_grad(
     self, points: npt.NDArray[np.floating], shape: tuple[int, ...]
   ) -> tuple[sparse.coo_array, sparse.coo_array, sparse.coo_array]:
-    vec = points[:, None, :] - self.center_cuda[None, :, :]  # shape: N_p, N_e, 3
-    master_points = np.einsum("ped,ned->epn", vec, self.contradir_cuda, optimize="greedy")  # shape: N_e, N_p, 3
+    vec = points[:, None, :] - self._center_device[None, :, :]  # shape: N_p, N_e, 3
+    master_points = self._array_api.einsum("ped,ned->epn", vec, self._contradir_device, optimize="greedy")  # shape: N_e, N_p, 3
     eps = 1e-15
-    elements_ids, points_ids = np.nonzero((master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps)))
-    points_ids, elements = np.unique(points_ids, return_index=True)
+    elements_ids, points_ids = self._array_api.nonzero(
+      (master_points >= -eps).all(axis=-1) & (master_points.sum(axis=-1) <= np.float64(1 + eps))
+    )
+    points_ids, elements = self._array_api.unique(points_ids, return_index=True)
     elements_ids = elements_ids[elements]
+
+    if self.device == "cuda":
+      elements_ids = self._cp.asnumpy(elements_ids)
+      points_ids = self._cp.asnumpy(points_ids)
 
     ones = np.ones_like(points_ids)
     zeros = np.zeros_like(points_ids)
@@ -619,9 +655,6 @@ class FemTetrahedron4(FemBase3D):
         ],
       ]
     )
-    grad = np.asnumpy(grad)
-    elements_ids = np.asnumpy(elements_ids)
-    points_ids = np.asnumpy(points_ids)
     grad_cart = np.einsum("npd,nbp->dpb", self.contradir[:, elements_ids], grad, optimize="greedy")
     i = np.repeat(points_ids, 4)
     j = self.elements[elements_ids].ravel()

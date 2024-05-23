@@ -9,12 +9,31 @@ from .fem_domain import FemDomain
 
 
 class FemProblem:
-  def __init__(self, domains: list[FemDomain], dim: int = 2):
+  def __init__(self, domains: list[FemDomain], dim: int = 2, device: str = "cpu"):
     """Initializes the finite element problem."""
     self._domains = domains
     self._dim = domains[0].vertices.shape[-1]
+    self._device = device
+    self._cp = None
+    self._cpsl = None
+
+    if self.device == "cuda":
+      try:
+        import cupy as cp
+        import cupy.sparse.linalg as cpsl
+
+        self._cp = cp
+        self._cpsl = cpsl
+      except ImportError:
+        raise ImportError("CuPy is not installed. Please install CuPy to use CUDA.")
+
     self._dirichlet = False
     self._factorized = False
+
+  @property
+  def device(self) -> str:
+    """The device of the problem. Can be 'cpu' or 'cuda'. If CuPy is installed tabulation and solution are computed on CUDA device."""
+    return self._device
 
   @property
   def domains(self) -> list[FemDomain]:
@@ -73,6 +92,15 @@ class FemProblem:
     self._matrix[boundary_ids, boundary_ids] = 1.0
     self._matrix.eliminate_zeros()
     self._load_vector[boundary_ids] = 0
+    if self.device == "cuda":
+      self._matrix_cuda = self._cp.sparse.csc_matrix(
+        (
+          self._cp.array(self.matrix.data),
+          self._cp.array(self.matrix.indices),
+          self._cp.array(self.matrix.indptr),
+        )
+      )
+      self._load_vector_cuda = self._cp.array(self.load_vector)
     self._dirichlet = True
 
   @property
@@ -257,14 +285,27 @@ class FemProblem:
       i += 1
 
     diag = self.matrix.diagonal() + 1e-30
-    sol, exit = sparse.linalg.cg(
-      self.matrix,
-      self.load_vector,
-      M=sparse.diags(np.where(diag != 0, 1 / diag, 1)),
-      rtol=rtol,
-      atol=atol,
-      callback=count_iter,
-    )
+    M = sparse.diags(np.where(diag != 0, 1 / diag, 1))
+    if self.device == "cuda":
+      M = M.tocsc()
+      M_cuda = self._cp.sparse.csc_matrix(
+        (
+          self._cp.array(M.data),
+          self._cp.array(M.indices),
+          self._cp.array(M.indptr),
+        )
+      )
+      sol, exit = self._cpsl.cg(self._matrix_cuda, self._load_vector_cuda, M=M_cuda, tol=rtol, atol=atol, callback=count_iter)
+      sol = self._cp.asnumpy(sol)
+    else:
+      sol, exit = sparse.linalg.cg(
+        self.matrix,
+        self.load_vector,
+        M=M,
+        rtol=rtol,
+        atol=atol,
+        callback=count_iter,
+      )
     assert exit == 0, exit
     if verbose:
       print(f"CG iters {i}")
