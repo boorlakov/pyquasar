@@ -289,11 +289,15 @@ class Mesh:
 
       elements = list(generate_block(dim, tag))
       boundaries = []
-      for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
-        blocks = list(generate_block(bdim, abs(btag)))
-        assert len(blocks) > 0, (dim, tag)
-        boundaries.append(MeshBoundary(get_material(bdim, abs(btag)), btag, blocks))
+      # for bdim, btag in gmsh.model.get_boundary([(dim, tag)]):
+      #   blocks = list(generate_block(bdim, abs(btag)))
+      #   assert len(blocks) > 0, (dim, tag)
+      #   boundaries.append(MeshBoundary(get_material(bdim, abs(btag)), btag, blocks))
 
+      for ph_dim, ph_tag in gmsh.model.get_physical_groups(dim - 1):
+        for ent_tag in gmsh.model.get_entities_for_physical_group(ph_dim, ph_tag):
+          blocks = list(generate_block(ph_dim, abs(ent_tag)))
+          boundaries.append(MeshBoundary(get_material(ph_dim, abs(ent_tag)), ent_tag, blocks))
       return MeshDomain(material, dim, tag, vertices, elements, boundaries, boundary_indices)
 
     domains = []
@@ -301,6 +305,8 @@ class Mesh:
     gmsh.option.set_number("General.Terminal", 0)
     try:
       gmsh.open(file)
+
+      gmsh.model.occ.synchronize()
 
       gmsh.option.set_number("Mesh.PartitionCreateTopology", 1)
       gmsh.option.set_number("Mesh.PartitionCreatePhysicals", 1)
