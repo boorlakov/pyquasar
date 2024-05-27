@@ -1,17 +1,22 @@
 SetFactory("OpenCASCADE");
 
-Point(1) = {0, 0, 0, 1.0};
-Point(2) = {4, 0, 0, 1.0};
-Point(3) = {4, 6, 0, 1.0};
-Point(4) = {0, 6, 0, 1.0};
-Point(5) = {0, 0, 3, 1.0};
-Point(6) = {4, 0, 3, 1.0};
-Point(7) = {4, 6, 3, 1.0};
-Point(8) = {0, 6, 3, 1.0};
-Point(9) = {1, 1, 1, 0.1};
-Point(10) = {1.5, 1, 1, 0.1};
-Point(11) = {1.5, 1, 1.5, 0.1};
-Point(12) = {1, 1, 1.5, 0.1};
+// Cube definition
+cube_side_len = 1.0;
+Point(1) = {0, 0, 0, cube_side_len};
+Point(2) = {4, 0, 0, cube_side_len};
+Point(3) = {4, 6, 0, cube_side_len};
+Point(4) = {0, 6, 0, cube_side_len};
+Point(5) = {0, 0, 3, cube_side_len};
+Point(6) = {4, 0, 3, cube_side_len};
+Point(7) = {4, 6, 3, cube_side_len};
+Point(8) = {0, 6, 3, cube_side_len};
+
+// Source definition
+src_side_len = 0.05;
+Point(9) = {1, 1, 1, src_side_len};
+Point(10) = {1.1, 1, 1, src_side_len};
+Point(11) = {1.1, 1, 1.1, src_side_len};
+Point(12) = {1, 1, 1.1, src_side_len};
 
 Line(1) = {4, 1};
 Line(2) = {1, 2};
@@ -61,4 +66,5 @@ Physical Surface("source", 17) = {7};
 BooleanFragments{ Volume{1}; Delete; }{ Surface{7}; Delete; }
 
 //Physical Surface("dirichlet", 14) = {8};
-Physical Surface("neumann", 29) = {8, 12, 11, 13, 9, 10};
+Physical Surface("dirichlet", 29) = {8, 12, 11, 13, 9, 10};
+// Physical Surface("neumann", 29) = {8, 12, 11, 13, 9, 10};

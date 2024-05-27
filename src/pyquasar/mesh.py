@@ -346,3 +346,78 @@ class Mesh:
     for domain in self.domains:
       domain._localize_numeration(is_interface, global_indices)
     self._numeration = "local"
+
+
+def sparsespace(start, end, num, ratio=1.0):
+  """
+  Generates a sparse sequence of numbers between two given values with a specified number of elements.
+
+  Parameters
+  ----------
+  start : float or int
+      The starting value of the sequence.
+  end : float or int
+      The ending value of the sequence.
+  num : int
+      The number of elements in the output sequence.
+  ratio : float, optional
+      The ratio at which to space out the elements in the sequence. If equals to 1.0, then returns numpy.linspace. Default is 1.0.
+
+  Returns
+  -------
+  out : numpy.ndarray
+      A numpy array containing the sparse sequence of numbers.
+
+  Raises
+  ------
+  AssertionError
+      If `start` is greater than or equal to `end`.
+
+  Examples
+  --------
+  >>> import numpy as np
+  >>> sparsespace(start=0.0, end=3.0, num=3, ratio=0.5)
+  array([0., 2., 3.])
+  >>> sparsespace(start=0.0, end=3.0, num=3, ratio=1.0)
+  array([0. , 1.5, 3. ])"""
+
+  def sparsify(idx, step, ratio):
+    return step * (1 - np.power(ratio, idx)) / (1 - ratio)
+
+  assert start < end, "start should be less than end"
+
+  if ratio < 0:
+    ratio = 1.0 / np.abs(ratio)
+
+  if not np.isclose(1.0, ratio, atol=1e-15):
+    base = (1 - np.power(ratio, num - 1)) / (1 - ratio)
+    base_step = (end - start) / base
+    indexes = np.arange(1, num)
+    offset = sparsify(indexes, base_step, ratio)
+    return np.insert(offset + start, 0, start, axis=0)
+  else:
+    return np.linspace(start, end, num)
+
+
+class TimeMesh:
+  def __init__(self, chi: float, start: float, end: float, time_stamps: int, discharge_ratio: float = 1.0, sigma: Optional[float] = 0.0):
+    self._time_stamps = time_stamps
+    self._mesh = sparsespace(start, end, time_stamps, discharge_ratio)
+    self._chi = chi
+    self._sigma = sigma
+
+  @property
+  def time_stamps(self) -> int:
+    return self._time_stamps
+
+  @property
+  def mesh(self) -> npt.NDArray[np.floating]:
+    return self._mesh
+
+  @property
+  def chi(self) -> float:
+    return self._chi
+
+  @property
+  def sigma(self) -> Optional[float]:
+    return self._sigma
