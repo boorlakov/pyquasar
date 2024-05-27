@@ -12,11 +12,11 @@ Point(7) = {4, 6, 3, cube_side_len};
 Point(8) = {0, 6, 3, cube_side_len};
 
 // Source definition
-src_side_len = 0.05;
+src_side_len = 0.01;
 Point(9) = {1, 1, 1, src_side_len};
-Point(10) = {1.1, 1, 1, src_side_len};
-Point(11) = {1.1, 1, 1.1, src_side_len};
-Point(12) = {1, 1, 1.1, src_side_len};
+Point(10) = {1.05, 1, 1, src_side_len};
+Point(11) = {1.05, 1, 1.05, src_side_len};
+Point(12) = {1, 1, 1.05, src_side_len};
 
 Line(1) = {4, 1};
 Line(2) = {1, 2};

@@ -150,7 +150,10 @@ class FemProblem:
 
   def factorize(self) -> None:
     self._factorized = True
-    self._factor = sparse.linalg.factorized(self.matrix)
+    if self.device == "cuda":
+      self._factor = self._cpsl.factorized(self._matrix_cuda)
+    else:
+      self._factor = sparse.linalg.factorized(self.matrix)
 
   def tabulate(self, points: npt.NDArray[np.floating], batch_size: Optional[int] = None) -> sparse.csr_array:
     """Tabulate at the given points.
@@ -277,7 +280,10 @@ class FemProblem:
     i = 0
 
     if self._factorized:
-      return self._factor(self.load_vector) + self._proj if self._dirichlet else self._factor(self.load_vector)
+      sol = self._factor(self.load_vector)
+      if self.device == 'cuda':
+        sol = self._cp.asnumpy(sol)
+      return sol + self._proj if self._dirichlet else sol
 
     def count_iter(x):
       nonlocal i
