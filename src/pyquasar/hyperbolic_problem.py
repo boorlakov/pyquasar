@@ -150,9 +150,10 @@ class HyperbolicProblem(FemProblem):
       # if self.time_mesh.sigma != 0:
       #   matr += dt_1 * self.time_mesh.sigma * self._mass
       # matr /= dt * dt_0
-      matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
-      if self.time_mesh.sigma != 0:
-        matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
+      # matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
+      # if self.time_mesh.sigma != 0:
+      #   matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
+      matr = self._stiff + self.time_mesh.chi * self._mass / (dt_0**2)
       self._matrix = matr
       self.add_skeleton_projection(1, material_filter, batch_size)
       self.factorize()
@@ -191,15 +192,15 @@ class HyperbolicProblem(FemProblem):
               for _k, _i in i.items():
                 if callable(_i):
                   mat[key][k][_k] = partial(_i, t_1)
-
         self.assembly(mat, batch_size)
         # matr = 2.0 * self.time_mesh.chi * self._mass
         # if self.time_mesh.sigma != 0:
         #   matr += dt_1 * self.time_mesh.sigma * self._mass
         # matr /= dt * dt_0
-        matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
-        if self.time_mesh.sigma != 0:
-          matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
+        # matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
+        # if self.time_mesh.sigma != 0:
+        #   matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
+        matr = self._stiff + self.time_mesh.chi * self._mass / (dt_0**2)
         self._matrix = matr
       else:
         self._load_vector = np.zeros_like(self.load_vector)
@@ -223,18 +224,21 @@ class HyperbolicProblem(FemProblem):
       #     + (dt_1 - dt_0) / (dt_1 * dt_0) * self.time_mesh.sigma * self.time_mesh.sigma * self._mass @ self.solutions[time_stamp - 1]
       #   )
       # self._load_vector += load
-      self._load_vector -= (
-        2.0
-        * self.time_mesh.chi
-        * (self._mass @ self.solutions[time_stamp - 2] / dt + self._mass @ self.solutions[time_stamp - 1] / dt_0)
-        / dt_1
+      # self._load_vector -= (
+      #   2.0
+      #   * self.time_mesh.chi
+      #   * (self._mass @ self.solutions[time_stamp - 2] / dt + self._mass @ self.solutions[time_stamp - 1] / dt_0)
+      #   / dt_1
+      # )
+      self._load_vector += (
+        self.time_mesh.chi * (2 * self._mass @ self.solutions[time_stamp - 1] - self._mass @ self.solutions[time_stamp - 2]) / (dt_0**2)
       )
-      if self.time_mesh.sigma != 0:
-        self._load_vector -= (
-          self.time_mesh.sigma
-          * (dt_0 * self._mass @ self.solutions[time_stamp - 2] / dt - dt * self._mass @ self.solutions[time_stamp - 1] / dt_0)
-          / dt_1
-        )
+      # if self.time_mesh.sigma != 0:
+      #   self._load_vector -= (
+      #     self.time_mesh.sigma
+      #     * (dt_0 * self._mass @ self.solutions[time_stamp - 2] / dt - dt * self._mass @ self.solutions[time_stamp - 1] / dt_0)
+      #     / dt_1
+      #   )
       bc_spatial = partial(bc, t)
       if not consant_step_time:
         self.add_skeleton_projection(bc_spatial, material_filter, batch_size)
