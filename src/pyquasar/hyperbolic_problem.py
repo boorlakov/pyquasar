@@ -134,22 +134,28 @@ class HyperbolicProblem(FemProblem):
       self._load_vector_cuda = self._cp.array(self.load_vector)
     self._dirichlet = True
 
-  def add_init_conds(self, material_filter: dict, condition: callable = None, velocity: callable = None, batch_size=None) -> None:
-    t_2 = self.time_mesh.mesh[0]
-    t_1 = self.time_mesh.mesh[1]
-    t = self.time_mesh.mesh[2]
-    dt = t - t_2
-    dt_1 = t_1 - t_2
-    dt_0 = t - t_1
+  def add_init_conds(
+    self, material_filter: dict, condition: callable = None, velocity: callable = None, batch_size=None, constant_time_step: bool = False
+  ) -> None:
     self._solutions[0] = np.zeros_like(self.solutions[0])
     self._solutions[1] = np.zeros_like(self.solutions[1])
-    matr = 2.0 * self.time_mesh.chi * self._mass
-    if self.time_mesh.sigma != 0:
-      matr += dt_1 * self.time_mesh.sigma * self._mass
-    matr /= dt * dt_0
-    self._matrix = matr
-    self.add_skeleton_projection(0, material_filter, batch_size)
-    self.factorize()
+    if constant_time_step:
+      t_2 = self.time_mesh.mesh[0]
+      t_1 = self.time_mesh.mesh[1]
+      t = self.time_mesh.mesh[2]
+      dt = t - t_2
+      dt_1 = t_1 - t_2
+      dt_0 = t - t_1
+      # matr = 2.0 * self.time_mesh.chi * self._mass
+      # if self.time_mesh.sigma != 0:
+      #   matr += dt_1 * self.time_mesh.sigma * self._mass
+      # matr /= dt * dt_0
+      matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
+      if self.time_mesh.sigma != 0:
+        matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
+      self._matrix = matr
+      self.add_skeleton_projection(1, material_filter, batch_size)
+      self.factorize()
 
   def solve(
     self,
@@ -187,10 +193,13 @@ class HyperbolicProblem(FemProblem):
                   mat[key][k][_k] = partial(_i, t_1)
 
         self.assembly(mat, batch_size)
-        matr = 2.0 * self.time_mesh.chi * self._mass
+        # matr = 2.0 * self.time_mesh.chi * self._mass
+        # if self.time_mesh.sigma != 0:
+        #   matr += dt_1 * self.time_mesh.sigma * self._mass
+        # matr /= dt * dt_0
+        matr = 2.0 * self.time_mesh.chi * self._mass / (dt * dt_0) + self._stiff
         if self.time_mesh.sigma != 0:
-          matr += dt_1 * self.time_mesh.sigma * self._mass
-        matr /= dt * dt_0
+          matr += self.time_mesh.sigma * (dt + dt_0) * self._mass / (dt * dt_0)
         self._matrix = matr
       else:
         self._load_vector = np.zeros_like(self.load_vector)
@@ -200,20 +209,32 @@ class HyperbolicProblem(FemProblem):
               for fe in (domain.fabric(boundary_element, batch_size=batch_size) for boundary_element in boundary.elements):
                 for batched_fe in fe:
                   func = f.get(boundary.type)
-                  func = partial(func, t_1)
+                  func = partial(func, t)
                   self._load_vector += np.sign(boundary.tag) * batched_fe.load_vector(func, self.load_vector.shape, dtype=np.float64)
       # Goodness gracious...
-      load = (
-        2 / (dt * dt_0) * self.time_mesh.chi * self._mass @ self.solutions[time_stamp - 1]
-        - 2 / (dt * dt_1) * self.time_mesh.chi * self._mass @ self.solutions[time_stamp - 2]
-        - self._stiff @ self.solutions[time_stamp - 1]
+      # load = (
+      #   2 / (dt * dt_0) * self.time_mesh.chi * self._mass @ self.solutions[time_stamp - 1]
+      #   - 2 / (dt * dt_1) * self.time_mesh.chi * self._mass @ self.solutions[time_stamp - 2]
+      #   - self._stiff @ self.solutions[time_stamp - 1]
+      # )
+      # if self.time_mesh.sigma != 0:
+      #   load += (
+      #     dt_0 / (dt * dt_1) * self.time_mesh.sigma * self._mass @ self.solutions[time_stamp - 2]
+      #     + (dt_1 - dt_0) / (dt_1 * dt_0) * self.time_mesh.sigma * self.time_mesh.sigma * self._mass @ self.solutions[time_stamp - 1]
+      #   )
+      # self._load_vector += load
+      self._load_vector -= (
+        2.0
+        * self.time_mesh.chi
+        * (self._mass @ self.solutions[time_stamp - 2] / dt + self._mass @ self.solutions[time_stamp - 1] / dt_0)
+        / dt_1
       )
       if self.time_mesh.sigma != 0:
-        load += (
-          dt_0 / (dt * dt_1) * self.time_mesh.sigma * self._mass @ self.solutions[time_stamp - 2]
-          + (dt_1 - dt_0) / (dt_1 * dt_0) * self.time_mesh.sigma * self.time_mesh.sigma * self._mass @ self.solutions[time_stamp - 1]
+        self._load_vector -= (
+          self.time_mesh.sigma
+          * (dt_0 * self._mass @ self.solutions[time_stamp - 2] / dt - dt * self._mass @ self.solutions[time_stamp - 1] / dt_0)
+          / dt_1
         )
-      self._load_vector += load
       bc_spatial = partial(bc, t)
       if not consant_step_time:
         self.add_skeleton_projection(bc_spatial, material_filter, batch_size)
@@ -239,7 +260,7 @@ class HyperbolicProblem(FemProblem):
     i = 0
 
     if self._factorized:
-      sol = self._factor(self.load_vector)
+      sol = self._factor(self._cp.asarray(self.load_vector))
       if self.device == "cuda":
         sol = self._cp.asnumpy(sol)
       return sol + self._proj if self._dirichlet else sol
